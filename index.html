@@ -1,0 +1,766 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Harmonia</title>
+
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#1a6ef5">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    <meta name="apple-mobile-web-app-title" content="Harmonia">
+    <link rel="apple-touch-icon" href="icons/icon-192.png">
+    <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+    <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" rel="stylesheet" />
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@300;400;500;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jsmediatags/3.9.5/jsmediatags.min.js"></script>
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+
+<nav class="sidenav" id="sidenav">
+    <div class="sidenav-logo">
+        <span class="material-symbols-rounded">music_note</span>
+        <span class="logo-text">Harmonia</span>
+    </div>
+
+    <div class="sidenav-links">
+        <button class="sidenav-btn active" data-target="player">
+            <span class="material-symbols-rounded">play_circle</span>
+            <span>プレイヤー</span>
+        </button>
+        <button class="sidenav-btn" data-target="log">
+            <span class="material-symbols-rounded">bar_chart</span>
+            <span>ログ・統計</span>
+        </button>
+        <button class="sidenav-btn" data-target="edit">
+            <span class="material-symbols-rounded">tune</span>
+            <span>情報編集</span>
+        </button>
+        <button class="sidenav-btn" data-target="settings">
+            <span class="material-symbols-rounded">settings</span>
+            <span>設定</span>
+        </button>
+    </div>
+
+    <div class="sidenav-auth">
+        <span id="sync-status"></span>
+        <div id="user-info">
+            <span class="material-symbols-rounded" style="font-size:20px;color:var(--text-secondary);">account_circle</span>
+            <span id="user-name"></span>
+        </div>
+    </div>
+</nav>
+
+<main class="main-wrapper" id="main-wrapper">
+
+    <section id="player" class="page-section active">
+        <div class="player-page-layout">
+
+            <div class="player-left-panel" id="player-left-panel">
+                <div class="artwork-container" id="artwork-container">
+                    <div class="artwork-bg" id="artwork-bg"></div>
+                    <div class="artwork-image" id="artwork-image">
+                        <span class="material-symbols-rounded">music_note</span>
+                    </div>
+                </div>
+
+                <div class="now-playing-info">
+                    <div class="np-title" id="np-title">曲を選択してください</div>
+                    <div class="np-artist" id="np-artist">-</div>
+                </div>
+
+                <button id="mobile-expand-btn" class="icon-btn mobile-only-btn" title="プレイヤーを展開">
+                    <span class="material-symbols-rounded">expand_less</span>
+                </button>
+
+                <div class="player-controls-panel" id="player-controls-panel">
+                    <div class="progress-area">
+                        <span class="time-label" id="time-current">0:00</span>
+                        <input type="range" id="seek-bar" class="seek-bar" value="0" min="0" max="100">
+                        <span class="time-label" id="time-total">0:00</span>
+                    </div>
+
+                    <div class="controls-row">
+                        <button id="ctrl-shuffle" class="ctrl-btn sm" title="シャッフル (S)">
+                            <span class="material-symbols-rounded">shuffle</span>
+                        </button>
+                        <button id="ctrl-prev" class="ctrl-btn" title="前の曲 (←)">
+                            <span class="material-symbols-rounded">skip_previous</span>
+                        </button>
+                        <button id="ctrl-play" class="ctrl-btn play" title="再生/停止 (Space)">
+                            <span class="material-symbols-rounded">play_arrow</span>
+                        </button>
+                        <button id="ctrl-next" class="ctrl-btn" title="次の曲 (→)">
+                            <span class="material-symbols-rounded">skip_next</span>
+                        </button>
+                        <button id="ctrl-loop" class="ctrl-btn sm" title="ループ (L)">
+                            <span class="material-symbols-rounded">repeat</span>
+                        </button>
+                    </div>
+
+                    <div class="extra-row">
+                        <div class="volume-row">
+                            <button id="ctrl-mute" class="icon-btn sm">
+                                <span class="material-symbols-rounded">volume_up</span>
+                            </button>
+                            <input type="range" id="volume-bar" class="volume-bar" value="100" min="0" max="100">
+                        </div>
+                        <div class="extra-btns">
+                            <button id="ctrl-speed" class="speed-btn" title="再生速度">1x</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="player-right-panel">
+                <div class="right-panel-header">
+                    <div class="right-search-bar">
+                        <span class="material-symbols-rounded">search</span>
+                        <input type="text" id="main-search-input" placeholder="曲名、アーティスト、タグで検索">
+                    </div>
+                    <div class="right-header-actions">
+                        <button id="create-playlist-btn" class="action-btn header-action-btn" title="プレイリスト作成">
+                            <span class="material-symbols-rounded">playlist_add</span>
+                            <span class="btn-label-text">プレイリスト</span>
+                        </button>
+                        <div id="drop-zone-small" class="action-btn header-action-btn primary drop-zone-btn" title="音楽ファイルを追加（クリックまたはドロップ）">
+                            <span class="material-symbols-rounded">upload_file</span>
+                            <span class="btn-label-text">ファイル追加</span>
+                            <input type="file" id="file-upload" accept="audio/*" multiple style="display:none">
+                        </div>
+                    </div>
+                </div>
+
+                <div class="playlist-tabs-row">
+                    <div class="playlist-tabs" id="playlist-tabs">
+                        <button id="library-all-btn" class="playlist-tab active" data-target="all">
+                            <span class="material-symbols-rounded">library_music</span>
+                            <span>すべて</span>
+                        </button>
+                    </div>
+                </div>
+
+                <div class="tracklist-header">
+                    <div class="tracklist-header-left">
+                        <h2 id="current-playlist-name" class="tracklist-title">すべての曲</h2>
+                    </div>
+                    <div class="tracklist-header-right">
+                        <select id="main-sort-select" class="sort-select">
+                            <option value="manual">手動順</option>
+                            <option value="date_desc">追加日（新しい順）</option>
+                            <option value="date_asc">追加日（古い順）</option>
+                            <option value="name_asc">タイトル（昇順）</option>
+                            <option value="name_desc">タイトル（降順）</option>
+                            <option value="artist_asc">アーティスト（昇順）</option>
+                            <option value="artist_desc">アーティスト（降順）</option>
+                            <option value="release_desc">リリース日（新しい順）</option>
+                            <option value="release_asc">リリース日（古い順）</option>
+                        </select>
+                        <button id="btn-select-mode" class="action-btn select-mode-toggle-btn">
+                            <span class="material-symbols-rounded">checklist</span>
+                            <span class="btn-label-text">選択</span>
+                        </button>
+                        <button id="btn-select-all" class="action-btn" style="display:none;">
+                            <span class="material-symbols-rounded">select_all</span>
+                            <span class="btn-label-text">全選択</span>
+                        </button>
+                    </div>
+                </div>
+
+                <div id="bulk-actions-bar" class="bulk-actions-bar">
+                    <span id="bulk-count" class="bulk-count">0曲を選択中</span>
+                    <button id="bulk-add-playlist-btn" class="action-btn sm">
+                        <span class="material-symbols-rounded">playlist_add</span>リストに追加
+                    </button>
+                    <button id="bulk-edit-btn" class="action-btn sm">
+                        <span class="material-symbols-rounded">edit</span>情報を編集
+                    </button>
+                    <button id="bulk-remove-playlist-btn" class="action-btn sm" style="display:none;">
+                        <span class="material-symbols-rounded">playlist_remove</span>リストから外す
+                    </button>
+                    <button id="bulk-delete-btn" class="action-btn sm danger">
+                        <span class="material-symbols-rounded">delete_forever</span>削除
+                    </button>
+                </div>
+
+                <div class="vscroll-outer" id="track-list-outer">
+                    <div class="vscroll-inner" id="track-list-inner">
+                        <div id="track-list-rendered" class="vscroll-rendered"></div>
+                    </div>
+                </div>
+
+                <div id="drop-zone" class="drop-zone-main">
+                    <span class="material-symbols-rounded">upload_file</span>
+                    <p>ここにファイルをドロップ</p>
+                    <span class="drop-sub">または</span>
+                    <button class="action-btn primary" onclick="document.getElementById('file-upload').click()">
+                        <span class="material-symbols-rounded">folder_open</span>
+                        ファイルを選択
+                    </button>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section id="log" class="page-section">
+        <div class="log-page">
+            <div class="log-header">
+                <h1 class="page-title">ログ・統計</h1>
+            </div>
+
+            <div class="anniversary-section" id="anniversary-section" style="display:none;">
+                <div class="anniversary-section-header">
+                    <span class="material-symbols-rounded">celebration</span>
+                    <span class="anniversary-section-title">本日が記念日の楽曲</span>
+                </div>
+                <div class="anniversary-list" id="anniversary-list"></div>
+            </div>
+
+            <div class="log-view-tabs">
+                <button class="log-view-tab active" id="log-tab-chart" data-view="chart">
+                    <span class="material-symbols-rounded">bar_chart</span>
+                    グラフ
+                </button>
+                <button class="log-view-tab" id="log-tab-calendar" data-view="calendar">
+                    <span class="material-symbols-rounded">calendar_month</span>
+                    カレンダー
+                </button>
+            </div>
+
+            <div id="log-chart-view">
+                <div class="stat-cards">
+                    <div class="stat-card">
+                        <span class="material-symbols-rounded">schedule</span>
+                        <div class="stat-card-body">
+                            <div class="stat-label">総再生時間</div>
+                            <div class="stat-value" id="stat-total-time">-</div>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <span class="material-symbols-rounded">library_music</span>
+                        <div class="stat-card-body">
+                            <div class="stat-label">総曲数</div>
+                            <div class="stat-value" id="stat-total-tracks">-</div>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <span class="material-symbols-rounded">trending_up</span>
+                        <div class="stat-card-body">
+                            <div class="stat-label">最多再生</div>
+                            <div class="stat-value" id="stat-top-track">-</div>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <span class="material-symbols-rounded">person</span>
+                        <div class="stat-card-body">
+                            <div class="stat-label">最多アーティスト</div>
+                            <div class="stat-value" id="stat-top-artist">-</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="log-filters">
+                    <div class="filter-group">
+                        <span class="filter-label">カテゴリ</span>
+                        <div class="seg-control" id="log-category">
+                            <button class="seg-btn active" data-value="total">総合</button>
+                            <button class="seg-btn" data-value="artist">作者</button>
+                            <button class="seg-btn" data-value="tag">タグ</button>
+                            <button class="seg-btn" data-value="decade">年代</button>
+                        </div>
+                    </div>
+                    <div class="filter-group">
+                        <span class="filter-label">期間</span>
+                        <div class="seg-control" id="log-period">
+                            <button class="seg-btn active" data-value="all">全期間</button>
+                            <button class="seg-btn" data-value="day">今日</button>
+                            <button class="seg-btn" data-value="week">今週</button>
+                            <button class="seg-btn" data-value="month">今月</button>
+                            <button class="seg-btn" data-value="year">今年</button>
+                        </div>
+                    </div>
+                    <div class="filter-group">
+                        <span class="filter-label">グラフ単位</span>
+                        <div class="seg-control" id="log-unit">
+                            <button class="seg-btn active" data-value="auto">自動</button>
+                            <button class="seg-btn" data-value="hour">時間</button>
+                            <button class="seg-btn" data-value="day">日</button>
+                            <button class="seg-btn" data-value="week">週</button>
+                            <button class="seg-btn" data-value="month">月</button>
+                            <button class="seg-btn" data-value="year">年</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="log-charts-area">
+                    <div class="chart-card chart-card-main">
+                        <div class="chart-title-row">
+                            <h3 class="chart-card-title" id="bar-chart-title">再生時間の推移</h3>
+                        </div>
+                        <div class="chart-wrap">
+                            <canvas id="logChart"></canvas>
+                        </div>
+                    </div>
+                    <div class="chart-card chart-card-pie" id="pie-chart-card">
+                        <div class="chart-title-row">
+                            <h3 class="chart-card-title" id="pie-chart-title">構成比</h3>
+                        </div>
+                        <div class="chart-wrap pie-wrap">
+                            <canvas id="logPieChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="log-ranking" id="log-ranking">
+                    <h3 class="ranking-title" id="ranking-title">再生時間ランキング</h3>
+                    <div id="ranking-first-card" class="ranking-first-card" style="display:none;"></div>
+                    <ol class="ranking-list" id="ranking-list" start="2"></ol>
+                </div>
+            </div><div id="log-calendar-view" style="display:none;">
+                <div class="calendar-nav">
+                    <button class="icon-btn" id="cal-prev-btn" title="前の月">
+                        <span class="material-symbols-rounded">chevron_left</span>
+                    </button>
+                    <span class="cal-month-label" id="cal-month-label"></span>
+                    <button class="icon-btn" id="cal-next-btn" title="次の月">
+                        <span class="material-symbols-rounded">chevron_right</span>
+                    </button>
+                </div>
+                <div class="calendar-weekdays">
+                    <span class="cal-wd-sun">日</span>
+                    <span>月</span>
+                    <span>火</span>
+                    <span>水</span>
+                    <span>木</span>
+                    <span>金</span>
+                    <span class="cal-wd-sat">土</span>
+                </div>
+                <div class="calendar-grid" id="calendar-grid"></div>
+
+                <div class="calendar-day-panel" id="calendar-day-panel" style="display:none;">
+                    <div class="cal-day-header">
+                        <h3 class="cal-day-title" id="cal-day-title"></h3>
+                        <button class="icon-btn" id="cal-day-close">
+                            <span class="material-symbols-rounded">close</span>
+                        </button>
+                    </div>
+                    <ul class="cal-track-list" id="cal-track-list"></ul>
+                </div>
+            </div></div>
+    </section>
+
+    <section id="edit" class="page-section">
+        <div class="edit-page">
+            <div class="edit-page-header" id="edit-tracks-header">
+                <h1 class="page-title">情報編集</h1>
+                <div class="edit-search-bar">
+                    <span class="material-symbols-rounded">search</span>
+                    <input type="text" id="edit-search-input" placeholder="曲名・アーティストで検索">
+                </div>
+                <div class="edit-header-controls">
+                    <select id="edit-sort-select" class="sort-select">
+                        <option value="manual">追加順</option>
+                        <option value="date_desc">追加日（新しい順）</option>
+                        <option value="date_asc">追加日（古い順）</option>
+                        <option value="name_asc">タイトル（昇順）</option>
+                        <option value="name_desc">タイトル（降順）</option>
+                        <option value="artist_asc">アーティスト（昇順）</option>
+                        <option value="artist_desc">アーティスト（降順）</option>
+                        <option value="release_desc">リリース日（新しい順）</option>
+                        <option value="release_asc">リリース日（古い順）</option>
+                    </select>
+                    <button id="edit-select-mode-btn" class="action-btn select-mode-toggle-btn">
+                        <span class="material-symbols-rounded">checklist</span>
+                        <span class="btn-label-text">選択</span>
+                    </button>
+                    <button id="edit-select-all-btn" class="action-btn" style="display:none;">
+                        <span class="material-symbols-rounded">select_all</span>
+                        <span class="btn-label-text">全選択</span>
+                    </button>
+                </div>
+            </div>
+
+            <div class="edit-page-header edit-tag-header" id="edit-tags-header" style="display:none;">
+                <h1 class="page-title">情報編集</h1>
+                <button id="add-global-tag-btn" class="action-btn primary sm">
+                    <span class="material-symbols-rounded">add</span>
+                    <span class="btn-label-text">タグを追加</span>
+                </button>
+            </div>
+
+            <div class="edit-sub-tabs">
+                <button class="edit-sub-tab active" id="edit-tab-tracks" data-tab="tracks">
+                    <span class="material-symbols-rounded">library_music</span>
+                    曲一覧
+                </button>
+                <button class="edit-sub-tab" id="edit-tab-tags" data-tab="tags">
+                    <span class="material-symbols-rounded">label</span>
+                    タグ管理
+                </button>
+            </div>
+
+            <div id="edit-tracks-view">
+                <div id="edit-bulk-actions-bar" class="bulk-actions-bar">
+                    <span id="edit-bulk-count" class="bulk-count">0曲を選択中</span>
+                    <button id="edit-bulk-edit-btn" class="action-btn sm">
+                        <span class="material-symbols-rounded">edit</span>情報を編集
+                    </button>
+                    <button id="edit-bulk-delete-btn" class="action-btn sm danger">
+                        <span class="material-symbols-rounded">delete_forever</span>削除
+                    </button>
+                </div>
+
+                <div class="edit-vscroll-outer" id="edit-list-outer">
+                    <div class="vscroll-inner" id="edit-list-inner">
+                        <div id="edit-library-list" class="vscroll-rendered"></div>
+                    </div>
+                </div>
+
+                <div class="edit-empty" id="edit-empty">
+                    <span class="material-symbols-rounded">library_music</span>
+                    <p>ライブラリに曲がありません</p>
+                </div>
+            </div><div id="tag-management-view" style="display:none;">
+                <div class="tag-mgmt-desc-row">
+                    <p class="tag-mgmt-desc">↑↓ボタンで表示優先順位を変更できます。優先順位は楽曲一覧のタグ表示順に反映され、同期されます。</p>
+                </div>
+                <ul class="tag-mgmt-list" id="tag-mgmt-list">
+                    </ul>
+                <div class="tag-mgmt-empty" id="tag-mgmt-empty" style="display:none;">
+                    <span class="material-symbols-rounded">label_off</span>
+                    <p>タグがまだありません</p>
+                </div>
+            </div></div>
+    </section>
+
+    <section id="settings" class="page-section">
+        <div class="settings-page">
+            <h1 class="page-title">設定</h1>
+
+            <div class="settings-group">
+                <h2 class="settings-group-title">アカウント</h2>
+                <div class="settings-item settings-auth-item">
+                    <div class="settings-item-info">
+                        <div class="settings-item-label">Googleアカウント</div>
+                        <div class="settings-item-desc">ログインすると再生ログ・ライブラリをGoogle Driveで別端末と同期できます</div>
+                    </div>
+                    <div class="settings-auth-controls">
+                        <button id="settings-btn-login" class="auth-btn">
+                            <span class="material-symbols-rounded">login</span>
+                            <span>Googleでログイン</span>
+                        </button>
+                        <div id="settings-user-info" style="display:none;">
+                            <span class="material-symbols-rounded" style="font-size:20px;color:var(--text-secondary);">account_circle</span>
+                            <span id="settings-user-name"></span>
+                            <button id="settings-btn-logout" class="action-btn danger sm">
+                                <span class="material-symbols-rounded">logout</span>
+                                ログアウト
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="settings-group">
+                <h2 class="settings-group-title">Google Drive 同期</h2>
+
+                <div class="settings-item">
+                    <div class="settings-item-info">
+                        <div class="settings-item-label">ストリーミング再生</div>
+                        <div class="settings-item-desc">ファイルをローカルに保存せず、Google Driveから直接ストリーミング再生します</div>
+                    </div>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="setting-streaming">
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+
+                <div class="settings-item">
+                    <div class="settings-item-info">
+                        <div class="settings-item-label">自動同期</div>
+                        <div class="settings-item-desc">
+                            OFFにすると操作を蓄積し、「今すぐ同期」ボタンで一括同期できます。<br>
+                            <span style="color: var(--warning); display: inline-block; margin-top: 4px;">※データ通信量が多くなるため、Wi-Fi環境での手動同期を推奨します。</span>
+                        </div>
+                    </div>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="setting-auto-sync">
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+
+                <div class="settings-item sync-progress-item" id="sync-progress-item" style="display:none;">
+                    <div class="settings-item-info">
+                        <div class="settings-item-label" id="sync-progress-label">同期中...</div>
+                        <div class="settings-item-desc" id="sync-progress-detail">準備中</div>
+                    </div>
+                    <div class="sync-progress-display">
+                        <span class="sync-pct-badge" id="sync-progress-pct">0%</span>
+                        <div class="sync-bar-wrap">
+                            <div class="sync-bar-fill" id="sync-bar-fill"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="settings-item" id="sync-retry-item" style="display:none;">
+                    <div class="settings-item-info">
+                        <div class="settings-item-label" style="color:var(--danger);">同期に失敗しました</div>
+                        <div class="settings-item-desc" id="sync-error-detail">エラーが発生しました</div>
+                    </div>
+                    <button id="sync-retry-btn" class="action-btn">
+                        <span class="material-symbols-rounded">refresh</span>
+                        再試行
+                    </button>
+                </div>
+
+                <div class="settings-item" id="sync-manual-item" style="display:none;">
+                    <div class="settings-item-info">
+                        <div class="settings-item-label">手動同期</div>
+                        <div class="settings-item-desc" id="last-sync-text">最終同期: -</div>
+                    </div>
+                    <button id="sync-now-btn" class="action-btn">
+                        <span class="material-symbols-rounded">sync</span>
+                        今すぐ同期
+                        <span class="pending-sync-badge" id="pending-sync-badge" style="display:none;">0</span>
+                    </button>
+                </div>
+            </div>
+
+            <div class="settings-group">
+                <h2 class="settings-group-title">キーボードショートカット</h2>
+                <div class="kbd-grid">
+                    <div class="kbd-row"><span>再生 / 一時停止</span><kbd>Space</kbd></div>
+                    <div class="kbd-row"><span>次の曲</span><kbd>→</kbd></div>
+                    <div class="kbd-row"><span>前の曲</span><kbd>←</kbd></div>
+                    <div class="kbd-row"><span>音量アップ</span><kbd>↑</kbd></div>
+                    <div class="kbd-row"><span>音量ダウン</span><kbd>↓</kbd></div>
+                    <div class="kbd-row"><span>ループ切り替え</span><kbd>L</kbd></div>
+                    <div class="kbd-row"><span>シャッフル切り替え</span><kbd>S</kbd></div>
+                </div>
+            </div>
+
+            <div class="settings-group">
+                <h2 class="settings-group-title">データ管理</h2>
+                <div class="settings-item">
+                    <div class="settings-item-info">
+                        <div class="settings-item-label">再生ログをリセット</div>
+                        <div class="settings-item-desc">すべての再生履歴・統計データを削除します</div>
+                    </div>
+                    <button id="clear-logs-btn" class="action-btn danger">
+                        <span class="material-symbols-rounded">delete_sweep</span>
+                        リセット
+                    </button>
+                </div>
+            </div>
+        </div>
+    </section>
+
+</main>
+
+<div class="queue-panel" id="queue-panel">
+    <div class="queue-header">
+        <h3>再生キュー</h3>
+        <button class="icon-btn" id="close-queue-btn">
+            <span class="material-symbols-rounded">close</span>
+        </button>
+    </div>
+    <ul class="queue-list" id="queue-list"></ul>
+</div>
+<div class="queue-overlay" id="queue-overlay"></div>
+
+<div class="modal-overlay" id="edit-modal" style="display:none;">
+    <div class="edit-modal-content">
+        <div class="edit-modal-header">
+            <h2 class="edit-modal-title" id="edit-modal-title">情報を編集</h2>
+            <button class="icon-btn" id="close-edit-modal">
+                <span class="material-symbols-rounded">close</span>
+            </button>
+        </div>
+
+        <div class="edit-modal-body">
+            <div class="edit-thumbnail-area">
+                <div class="edit-thumbnail-preview" id="edit-thumbnail-preview">
+                    <span class="material-symbols-rounded">image</span>
+                </div>
+                <div class="thumbnail-actions">
+                    <button class="action-btn sm" id="edit-thumbnail-btn">
+                        <span class="material-symbols-rounded">photo</span>
+                        画像を変更
+                    </button>
+                    <button class="action-btn sm" id="edit-thumbnail-remove-btn">
+                        <span class="material-symbols-rounded">delete</span>
+                        削除
+                    </button>
+                    <input type="file" id="edit-thumbnail-input" accept="image/*" style="display:none">
+                </div>
+            </div>
+
+            <div class="edit-form-area">
+                <div class="form-field">
+                    <label class="form-label">タイトル</label>
+                    <input type="text" id="edit-title" class="form-input" placeholder="曲のタイトル">
+                </div>
+
+                <div class="form-field">
+                    <label class="form-label">アーティスト</label>
+                    <input type="text" id="edit-artist" class="form-input" placeholder="アーティスト名を入力または下から選択" autocomplete="off" list="existing-artists-list">
+                    <datalist id="existing-artists-list"></datalist>
+                    <div class="existing-chips-row" id="existing-artists-row"></div>
+                </div>
+
+                <div class="form-field">
+                    <label class="form-label">リリース日</label>
+                    <input type="date" id="edit-date" class="form-input">
+                </div>
+
+                <div class="form-field">
+                    <label class="form-label">タグ</label>
+                    <div class="tags-input-area" id="tags-input-area">
+                        <div class="tags-list" id="edit-tags-list"></div>
+                        <input type="text" id="edit-tags-input" class="tags-input" placeholder="タグを入力してEnter" list="existing-tags-list" autocomplete="off">
+                        <datalist id="existing-tags-list"></datalist>
+                    </div>
+                    <div class="existing-chips-row" id="existing-tags-row"></div>
+                </div>
+            </div>
+        </div>
+
+        <div class="edit-modal-footer">
+            <span class="edit-modal-info" id="edit-modal-info"></span>
+            <div class="edit-modal-btns">
+                <button class="action-btn" id="close-edit-modal-cancel">キャンセル</button>
+                <button class="action-btn primary" id="save-metadata-btn">
+                    <span class="material-symbols-rounded">save</span>
+                    保存
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<nav class="bottom-nav" id="bottom-nav">
+    <button class="bottom-nav-btn active" data-target="player">
+        <span class="material-symbols-rounded">play_circle</span>
+        <span>プレイヤー</span>
+    </button>
+    <button class="bottom-nav-btn" data-target="log">
+        <span class="material-symbols-rounded">bar_chart</span>
+        <span>ログ</span>
+    </button>
+    <button class="bottom-nav-btn" data-target="edit">
+        <span class="material-symbols-rounded">tune</span>
+        <span>編集</span>
+    </button>
+    <button class="bottom-nav-btn" data-target="settings">
+        <span class="material-symbols-rounded">settings</span>
+        <span>設定</span>
+    </button>
+</nav>
+
+<div class="mini-player" id="mini-player">
+    <div class="mini-player-inner">
+        <div class="mini-thumb" id="mini-thumb">
+            <span class="material-symbols-rounded">music_note</span>
+        </div>
+        <div class="mini-info">
+            <div class="mini-title" id="mini-title">未選択</div>
+            <div class="mini-artist" id="mini-artist">-</div>
+        </div>
+        <div class="mini-controls">
+            <button id="mini-prev" class="icon-btn">
+                <span class="material-symbols-rounded">skip_previous</span>
+            </button>
+            <button id="mini-play" class="icon-btn play-mini">
+                <span class="material-symbols-rounded">play_arrow</span>
+            </button>
+            <button id="mini-next" class="icon-btn">
+                <span class="material-symbols-rounded">skip_next</span>
+            </button>
+        </div>
+    </div>
+    <div class="mini-progress">
+        <div class="mini-progress-bar" id="mini-progress-bar"></div>
+    </div>
+</div>
+
+<div class="fullscreen-player" id="fullscreen-player">
+    <div class="fp-bg" id="fp-bg"></div>
+    <div class="fp-inner">
+        <div class="fp-header">
+            <button class="icon-btn" id="fp-close-btn">
+                <span class="material-symbols-rounded">keyboard_arrow_down</span>
+            </button>
+            <span class="fp-header-title">再生中</span>
+            <div style="width:36px;flex-shrink:0;"></div>
+        </div>
+
+        <div class="fp-artwork-wrap">
+            <div id="fp-artwork" class="fp-artwork">
+                <span class="material-symbols-rounded">music_note</span>
+            </div>
+        </div>
+
+        <div class="fp-info">
+            <div class="fp-title" id="fp-title">未選択</div>
+            <div class="fp-artist" id="fp-artist">-</div>
+        </div>
+
+        <div class="fp-controls">
+            <div class="fp-progress">
+                <span class="fp-time" id="fp-time-current">0:00</span>
+                <input type="range" id="fp-seek-bar" value="0" min="0" max="100">
+                <span class="fp-time" id="fp-time-total">0:00</span>
+            </div>
+
+            <div class="fp-buttons">
+                <button id="fp-shuffle" class="icon-btn fp-btn-sm">
+                    <span class="material-symbols-rounded">shuffle</span>
+                </button>
+                <button id="fp-prev" class="icon-btn fp-btn-md">
+                    <span class="material-symbols-rounded">skip_previous</span>
+                </button>
+                <button id="fp-play" class="icon-btn fp-play-btn">
+                    <span class="material-symbols-rounded">play_arrow</span>
+                </button>
+                <button id="fp-next" class="icon-btn fp-btn-md">
+                    <span class="material-symbols-rounded">skip_next</span>
+                </button>
+                <button id="fp-loop" class="icon-btn fp-btn-sm">
+                    <span class="material-symbols-rounded">repeat</span>
+                </button>
+            </div>
+
+            <div class="fp-extra">
+                <button id="fp-speed" class="speed-btn fp-speed-btn">1x</button>
+                <div class="fp-volume">
+                    <span class="material-symbols-rounded fp-vol-icon">volume_down</span>
+                    <input type="range" id="fp-volume-bar" value="100" min="0" max="100">
+                    <span class="material-symbols-rounded fp-vol-icon">volume_up</span>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="toast-container" id="toast-container"></div>
+
+<script src="app.js"></script>
+
+<script>
+if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+        navigator.serviceWorker.register('./sw.js')
+            .then(reg => console.log('SW registered:', reg.scope))
+            .catch(err => console.warn('SW registration failed:', err));
+    });
+}
+</script>
+</body>
+</html>
