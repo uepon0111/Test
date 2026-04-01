@@ -1,5 +1,5 @@
 /**
- * app.js - Harmonia Music Player (v6 - Improved Sync & Session)
+ * app.js - Harmonia Music Player (v6 改修版)
  */
 
 const GOOGLE_CLIENT_ID   = '966636096862-8hrrm5heb4g5r469veoels7u6ifjguuk.apps.googleusercontent.com';
@@ -39,7 +39,7 @@ const LAST_SYNC_KEY     = 'harmonia_last_sync';
 const TAG_ORDER_KEY     = 'harmonia_tag_order';
 const PENDING_OPS_KEY   = 'harmonia_pending_ops';
 const AUTO_SYNC_KEY     = 'harmonia_auto_sync';
-const PENDING_DELETES_KEY = 'harmonia_pending_deletes'; // 削除待ちキュー
+const PENDING_DELETES_KEY = 'harmonia_pending_deletes'; // Drive削除待ちリスト
 
 const appState = {
     tracks:             [],
@@ -47,8 +47,8 @@ const appState = {
     currentQueue:       [],
     currentTrackIndex:  -1,
     isPlaying:          false,
-    allKnownTags:       new Map(),
-    tagOrder:           [],
+    allKnownTags:       new Map(),  // text → { text, color }
+    tagOrder:           [],         // 優先順位順のタグtext配列
     currentPlaylistId:  null,
     searchQueryMain:    '',
     sortModeMain:       'manual',
@@ -61,8 +61,9 @@ const appState = {
     isLoggedIn:         false,
     user:               null,
     isSyncing:          false,
+    pendingSyncRequest: false,      // トークン取得待ちフラグ
     isStreaming:        false,
-    isAutoSync:         false, // デフォルトをOFFに変更
+    isAutoSync:         false,      // デフォルトをfalseに変更
     pendingOpsCount:    0,
     loopMode:           'none',
     isShuffled:         false,
@@ -72,12 +73,10 @@ const appState = {
     currentLogCategory: 'total',
     currentLogPeriod:   'all',
     currentLogUnit:     'auto',
-    currentLogView:     'chart',
+    currentLogView:     'chart',    // 'chart' | 'calendar'
     calendarYear:       new Date().getFullYear(),
     calendarMonth:      new Date().getMonth(),
-    currentEditTab:     'tracks',
-    resolveToken:       null,
-    rejectToken:        null,
+    currentEditTab:     'tracks',   // 'tracks' | 'tags'
 };
 
 // ─────────────────────────────────────────────
@@ -164,6 +163,7 @@ function saveTagOrderToStorage() {
     localStorage.setItem(TAG_ORDER_KEY, JSON.stringify(appState.tagOrder));
 }
 
+/** タグ配列を優先順位順にソートして返す */
 function sortTagsByOrder(tags) {
     if (!tags || tags.length === 0) return [];
     return [...tags].sort((a, b) => {
@@ -178,22 +178,24 @@ function sortTagsByOrder(tags) {
     });
 }
 
+/** allKnownTags を新たなタグで更新し、tagOrder に存在しなければ末尾に追加 */
 function syncTagOrder() {
     appState.allKnownTags.forEach((tagObj, text) => {
         if (!appState.tagOrder.includes(text)) {
             appState.tagOrder.push(text);
         }
     });
+    // tagOrder に残っているが allKnownTags にないタグは除去
     appState.tagOrder = appState.tagOrder.filter(t => appState.allKnownTags.has(t));
     saveTagOrderToStorage();
 }
 
 // ─────────────────────────────────────────────
-// 自動同期 / 未同期カウンター
+// 自動同期 / 未同期カウンター / 削除キュー管理
 // ─────────────────────────────────────────────
 function loadAutoSyncSetting() {
     const saved = localStorage.getItem(AUTO_SYNC_KEY);
-    appState.isAutoSync = (saved === null) ? false : saved === 'true';
+    appState.isAutoSync = (saved === null) ? false : saved === 'true'; // デフォルトfalse
 }
 
 function loadPendingOpsCount() {
@@ -222,6 +224,13 @@ function updatePendingBadge() {
     } else {
         badge.style.display = 'none';
     }
+}
+
+function addPendingDelete(fileId) {
+    if (!fileId) return;
+    const q = JSON.parse(localStorage.getItem(PENDING_DELETES_KEY) || '[]');
+    if (!q.includes(fileId)) q.push(fileId);
+    localStorage.setItem(PENDING_DELETES_KEY, JSON.stringify(q));
 }
 
 // ─────────────────────────────────────────────
@@ -278,6 +287,7 @@ function updateSyncError(errorMsg) {
 // 設定
 // ─────────────────────────────────────────────
 function initSettings() {
+    // ストリーミング
     const isStreamingSaved = localStorage.getItem('isStreaming');
     if (isStreamingSaved !== null) appState.isStreaming = isStreamingSaved === 'true';
     const checkboxStreaming = document.getElementById('setting-streaming');
@@ -290,6 +300,7 @@ function initSettings() {
         });
     }
 
+    // 自動同期トグル
     const checkboxAutoSync = document.getElementById('setting-auto-sync');
     if (checkboxAutoSync) {
         checkboxAutoSync.checked = appState.isAutoSync;
@@ -297,12 +308,14 @@ function initSettings() {
             appState.isAutoSync = e.target.checked;
             localStorage.setItem(AUTO_SYNC_KEY, appState.isAutoSync);
             updatePendingBadge();
+            // ONに切り替えた場合、蓄積された操作を即時同期
             if (appState.isAutoSync && appState.isLoggedIn && !appState.isSyncing && appState.pendingOpsCount > 0) {
                 performDriveSync();
             }
         });
     }
 
+    // ログリセット
     const clearLogsBtn = document.getElementById('clear-logs-btn');
     if (clearLogsBtn) {
         clearLogsBtn.addEventListener('click', async () => {
@@ -312,6 +325,7 @@ function initSettings() {
         });
     }
 
+    // 手動同期
     const syncNowBtn = document.getElementById('sync-now-btn');
     if (syncNowBtn) {
         syncNowBtn.addEventListener('click', () => {
@@ -319,6 +333,7 @@ function initSettings() {
         });
     }
 
+    // 再試行
     const syncRetryBtn = document.getElementById('sync-retry-btn');
     if (syncRetryBtn) {
         syncRetryBtn.addEventListener('click', () => {
@@ -328,6 +343,7 @@ function initSettings() {
         });
     }
 
+    // 最終同期日時復元
     const lastSync = localStorage.getItem(LAST_SYNC_KEY);
     if (lastSync) {
         const lastSyncText = document.getElementById('last-sync-text');
@@ -388,6 +404,9 @@ function updateVolumeIcon(val) {
     else                icon.textContent = 'volume_up';
 }
 
+// ─────────────────────────────────────────────
+// スマホ縦：プレイヤー展開ボタン
+// ─────────────────────────────────────────────
 function initMobileExpandBtn() {
     const btn   = document.getElementById('mobile-expand-btn');
     const panel = document.getElementById('player-left-panel');
@@ -401,6 +420,9 @@ function initMobileExpandBtn() {
     });
 }
 
+// ─────────────────────────────────────────────
+// ナビゲーション
+// ─────────────────────────────────────────────
 function initNavigation() {
     function switchPage(targetId) {
         document.querySelectorAll('.sidenav-btn').forEach(b =>
@@ -495,7 +517,7 @@ function renderQueuePanel() {
 }
 
 // ─────────────────────────────────────────────
-// スマホプレイヤー
+// フルスクリーンプレイヤー（スマホ）
 // ─────────────────────────────────────────────
 function initFullscreenPlayer() {
     const closeBtn  = document.getElementById('fp-close-btn');
@@ -555,6 +577,7 @@ function updateFullscreenPlayer(track) {
                 artwork.style.backgroundImage = 'none';
                 artwork.innerHTML = '<span class="material-symbols-rounded">music_note</span>';
                 if (fpBg) fpBg.style.background = '';
+                // 非同期ロード
                 loadThumbFromDB(track.id).then(dataUrl => {
                     if (dataUrl && artwork) {
                         artwork.style.backgroundImage = `url(${dataUrl})`;
@@ -571,6 +594,9 @@ function updateFullscreenPlayer(track) {
     }
 }
 
+// ─────────────────────────────────────────────
+// ミニプレイヤー（スマホ）
+// ─────────────────────────────────────────────
 function initMiniPlayer() {
     const miniPlayer  = document.getElementById('mini-player');
     const miniPlayBtn = document.getElementById('mini-play');
@@ -732,9 +758,8 @@ function getAllLogsFromDB() {
         req.onerror   = e => reject(e.target.error);
     });
 }
-
 // ─────────────────────────────────────────────
-// ログ画面・統計
+// ログ画面：ビュー切り替え
 // ─────────────────────────────────────────────
 function initLogViewTabs() {
     document.querySelectorAll('.log-view-tab').forEach(tab => {
@@ -1050,6 +1075,7 @@ function renderRanking(filteredLogs, category) {
                     <div class="ranking-first-meta">${tagsHtml}${date ? `<span class="ranking-first-date">${date}</span>` : ''}</div>
                 </div>
                 <div class="ranking-first-time">${formatLogTime(firstData.seconds)}</div>`;
+            // 遅延でサムネ更新
             if (!thumbUrl && firstData.trackId) {
                 loadThumbFromDB(firstData.trackId).then(dataUrl => {
                     if (dataUrl) {
@@ -1130,9 +1156,6 @@ function formatLogTime(seconds) {
     return `${h} 時間 ${m % 60} 分`;
 }
 
-// ─────────────────────────────────────────────
-// 周年バナー / カレンダー
-// ─────────────────────────────────────────────
 function renderAnniversaryBanner() {
     const section = document.getElementById('anniversary-section');
     const listEl  = document.getElementById('anniversary-list');
@@ -1220,7 +1243,7 @@ function renderCalendar() {
     grid.innerHTML = '';
 
     const today   = new Date();
-    const firstDay = new Date(year, month, 1).getDay();
+    const firstDay = new Date(year, month, 1).getDay(); // 0=日
     const daysInMonth = new Date(year, month + 1, 0).getDate();
 
     const dayTracks = {};
@@ -1277,6 +1300,7 @@ function renderCalendar() {
                 dotRow.appendChild(more);
             }
             cell.appendChild(dotRow);
+
             cell.addEventListener('click', () => showCalendarDayPanel(year, month, day, tracks));
         }
         grid.appendChild(cell);
@@ -1356,41 +1380,41 @@ function showCalendarDayPanel(year, month, day, tracks) {
 }
 
 // ─────────────────────────────────────────────
-// Google ログイン & Drive セッション管理
+// Google ログイン & Drive連携（状態保持対応）
 // ─────────────────────────────────────────────
 function initAuthUI() {
-    tokenClient = google.accounts.oauth2.initTokenClient({
-        client_id: GOOGLE_CLIENT_ID,
-        scope: 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/userinfo.profile',
-        callback: (tokenResponse) => {
-            if (tokenResponse && tokenResponse.access_token) {
-                gapiAccessToken = tokenResponse.access_token;
-                appState.isLoggedIn = true;
-                fetchUserInfo(gapiAccessToken);
-                if (appState.resolveToken) {
-                    appState.resolveToken(gapiAccessToken);
-                    appState.resolveToken = null;
-                    appState.rejectToken = null;
-                }
-            } else if (appState.rejectToken) {
-                appState.rejectToken(new Error('Token request failed'));
-                appState.resolveToken = null;
-                appState.rejectToken = null;
-            }
-        },
-    });
-
-    // ローカルストレージからセッション復元 (シームレスログイン維持)
-    const savedUser = JSON.parse(localStorage.getItem('harmonia_user') || 'null');
+    const savedUser = localStorage.getItem('harmonia_user_profile');
     if (savedUser) {
-        appState.isLoggedIn = true;
-        appState.user = savedUser;
-        updateAuthUIDisplay();
+        try {
+            appState.user = JSON.parse(savedUser);
+            appState.isLoggedIn = true;
+            updateAuthUIDisplay();
+        } catch(e) {}
     }
 
     const doLogin = () => {
         if (!GOOGLE_CLIENT_ID) { showToast('GOOGLE_CLIENT_ID を設定してください', 'error'); return; }
-        tokenClient.requestAccessToken({ prompt: 'select_account' });
+        if (typeof google === 'undefined' || !google.accounts) {
+            showToast('Google認証システムを読み込み中です。数秒後に再試行してください', 'warning'); return;
+        }
+        if (!tokenClient) {
+            tokenClient = google.accounts.oauth2.initTokenClient({
+                client_id: GOOGLE_CLIENT_ID,
+                scope: 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/userinfo.profile',
+                callback: (tokenResponse) => {
+                    if (tokenResponse && tokenResponse.access_token) {
+                        gapiAccessToken = tokenResponse.access_token;
+                        appState.isLoggedIn = true;
+                        fetchUserInfo(gapiAccessToken);
+                        if (appState.pendingSyncRequest) {
+                            appState.pendingSyncRequest = false;
+                            performDriveSync();
+                        }
+                    }
+                },
+            });
+        }
+        tokenClient.requestAccessToken();
     };
 
     const doLogout = () => {
@@ -1398,8 +1422,7 @@ function initAuthUI() {
         gapiAccessToken = null;
         appState.isLoggedIn = false;
         appState.user       = null;
-        localStorage.removeItem('harmonia_user');
-        localStorage.removeItem(HARMONIA_USER_KEY);
+        localStorage.removeItem('harmonia_user_profile');
         updateAuthUIDisplay();
         showToast('ログアウトしました');
     };
@@ -1426,7 +1449,7 @@ function fetchUserInfo(token) {
             if (!merge) await clearLocalDataForAccountSwitch();
         }
         localStorage.setItem(HARMONIA_USER_KEY, String(data.sub));
-        localStorage.setItem('harmonia_user', JSON.stringify(data));
+        localStorage.setItem('harmonia_user_profile', JSON.stringify(data));
         appState.user = data;
         updateAuthUIDisplay();
         showToast(`${data.name} でログインしました`, 'success');
@@ -1453,7 +1476,6 @@ async function clearLocalDataForAccountSwitch() {
     appState.currentTrackIndex = -1;
     appState.isPlaying         = false;
     localStorage.removeItem(SYNC_STATE_KEY);
-    localStorage.removeItem(PENDING_DELETES_KEY);
     updateMainQueue();
     showToast('ローカルデータをリセットしました', 'warning');
 }
@@ -1491,37 +1513,15 @@ function updateAuthUIDisplay() {
     }
 }
 
-// ─────────────────────────────────────────────
-// 自動同期
-// ─────────────────────────────────────────────
 function autoSync() {
     if (!appState.isLoggedIn || appState.isSyncing) return;
-    if (!appState.isAutoSync) {
-        incrementPendingOps();
-        return;
-    }
-    // トークンが無い（セッション復元直後）場合は自動同期でポップアップを出さない
-    if (!gapiAccessToken) {
+    if (!appState.isAutoSync || !gapiAccessToken) {
         incrementPendingOps();
         return;
     }
     performDriveSync();
 }
 
-async function ensureToken() {
-    if (gapiAccessToken) return gapiAccessToken;
-    if (!appState.isLoggedIn) throw new Error('Not logged in');
-
-    return new Promise((resolve, reject) => {
-        appState.resolveToken = resolve;
-        appState.rejectToken = reject;
-        tokenClient.requestAccessToken({ prompt: '' });
-    });
-}
-
-// ─────────────────────────────────────────────
-// Drive 同期・削除ヘルパー
-// ─────────────────────────────────────────────
 function getSyncState() {
     try { return JSON.parse(localStorage.getItem(SYNC_STATE_KEY) || 'null'); } catch { return null; }
 }
@@ -1532,51 +1532,19 @@ function clearSyncState() {
     localStorage.removeItem(SYNC_STATE_KEY);
 }
 
-async function driveDelete(fileId) {
-    const res = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}`, {
-        method: 'DELETE',
-        headers: { Authorization: `Bearer ${gapiAccessToken}` }
-    });
-    if (!res.ok && res.status !== 404) {
-        throw new Error(`Delete failed: ${res.status}`);
-    }
-}
-
-async function listAudioFilesInDrive(folderId) {
-    let files = [];
-    let pageToken = null;
-    do {
-        let q = `'${folderId}' in parents and mimeType contains 'audio/' and trashed=false`;
-        let url = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&fields=nextPageToken,files(id,name)&pageSize=1000`;
-        if (pageToken) url += `&pageToken=${pageToken}`;
-        const res = await driveGet(url);
-        if (!res.ok) break;
-        const data = await res.json();
-        if (data.files) files = files.concat(data.files);
-        pageToken = data.nextPageToken;
-    } while (pageToken);
-    return files;
-}
-
 // ─────────────────────────────────────────────
-// Google Drive 同期メインループ
+// Google Drive 同期（分割JSON・直接追加検知対応）
 // ─────────────────────────────────────────────
 async function performDriveSync() {
     if (appState.isSyncing) return;
-    if (!appState.isLoggedIn) return;
-
-    try {
-        await ensureToken();
-    } catch(e) {
-        showToast('セッションが切れました。ログインし直してください', 'warning');
-        appState.isLoggedIn = false;
-        updateAuthUIDisplay();
+    if (!gapiAccessToken) {
+        appState.pendingSyncRequest = true;
+        if (tokenClient) tokenClient.requestAccessToken();
         return;
     }
-
     appState.isSyncing = true;
-    let errCount = 0;
-    const prevState = getSyncState();
+
+    const prevState   = getSyncState();
     const uploadedIds = prevState?.uploadedIds || [];
     setSyncState({ phase: 'start', uploadedIds });
     updateSyncProgress(0, '同期を開始しています...');
@@ -1586,28 +1554,18 @@ async function performDriveSync() {
         const folderId      = await getOrCreateSyncFolder();
         const thumbFolderId = await getOrCreateSubFolder('thumbnails', folderId);
 
-        // ── 削除待ち（Pending Deletes）の処理 ──
-        updateSyncProgress(8, '削除ファイルを反映中...');
+        // ── 削除保留キューの反映 ──
         const pendingDeletes = JSON.parse(localStorage.getItem(PENDING_DELETES_KEY) || '[]');
-        const remainingDeletes = [];
-        for (const p of pendingDeletes) {
-            try {
-                if (p.driveFileId) await driveDelete(p.driveFileId);
-                if (p.thumbDriveId) await driveDelete(p.thumbDriveId);
-            } catch(e) {
-                errCount++;
-                remainingDeletes.push(p);
+        if (pendingDeletes.length > 0) {
+            updateSyncProgress(8, 'Drive上の削除を反映中...');
+            for (const fileId of pendingDeletes) {
+                try { await driveDelete(fileId); } catch (e) { console.warn('削除失敗:', e); }
             }
+            localStorage.removeItem(PENDING_DELETES_KEY);
         }
-        localStorage.setItem(PENDING_DELETES_KEY, JSON.stringify(remainingDeletes));
-
-        // ── Drive上の実際のファイル一覧を取得（Driveマスター同期用） ──
-        updateSyncProgress(12, 'Drive上のファイルを確認中...');
-        const driveAudioFiles = await listAudioFilesInDrive(folderId);
-        const driveAudioFileIds = new Set(driveAudioFiles.map(f => f.id));
 
         // ── リモートメタJSON取得 ──
-        updateSyncProgress(15, 'リモートデータを取得中...');
+        updateSyncProgress(10, 'リモートデータを取得中...');
         const metaFileId  = await findDriveFile('tracks_meta.json', 'application/json', folderId);
         const plFileId    = await findDriveFile('playlists.json',   'application/json', folderId);
         const settingsFileId = await findDriveFile('settings.json', 'application/json', folderId);
@@ -1618,69 +1576,75 @@ async function performDriveSync() {
 
         if (metaFileId) {
             const res = await driveGet(`https://www.googleapis.com/drive/v3/files/${metaFileId}?alt=media`);
-            if (res.ok) { const j = await res.json(); remoteTracks = j.tracks || []; }
+            if (res.ok) {
+                const j = await res.json();
+                remoteTracks = j.tracks || [];
+            }
         }
         if (plFileId) {
             const res = await driveGet(`https://www.googleapis.com/drive/v3/files/${plFileId}?alt=media`);
-            if (res.ok) { const j = await res.json(); remotePlaylists = j.playlists || []; }
+            if (res.ok) {
+                const j = await res.json();
+                remotePlaylists = j.playlists || [];
+            }
         }
         if (settingsFileId) {
             const res = await driveGet(`https://www.googleapis.com/drive/v3/files/${settingsFileId}?alt=media`);
-            if (res.ok) { const j = await res.json(); remoteTagOrder = j.tagOrder || []; }
+            if (res.ok) {
+                const j = await res.json();
+                remoteTagOrder = j.tagOrder || [];
+            }
         }
 
+        // ── Driveの直接追加・削除をスキャン ──
+        updateSyncProgress(12, 'Driveのファイル状態をスキャン中...');
+        const driveFilesRes = await driveGet(`https://www.googleapis.com/drive/v3/files?q='${folderId}' in parents and trashed=false and mimeType contains 'audio/'&fields=files(id,name,mimeType)`);
+        if (driveFilesRes.ok) {
+            const driveFiles = (await driveFilesRes.json()).files || [];
+            const driveFileIds = new Set(driveFiles.map(f => f.id));
+
+            for (const rTrack of remoteTracks) {
+                if (rTrack.driveFileId && !driveFileIds.has(rTrack.driveFileId)) {
+                    rTrack.deleted = true;
+                }
+            }
+
+            const knownDriveIds = new Set(remoteTracks.map(t => t.driveFileId).filter(Boolean));
+            for (const dFile of driveFiles) {
+                if (!knownDriveIds.has(dFile.id)) {
+                    const newTrack = {
+                        id: 'track_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9),
+                        fileName: dFile.name,
+                        title: dFile.name.replace(/\.[^/.]+$/, ''),
+                        artist: '不明なアーティスト',
+                        date: '', tags: [],
+                        addedAt: Date.now(), sortOrder: Date.now(),
+                        updatedAt: Date.now(), deleted: false,
+                        driveFileId: dFile.id, thumbDriveId: null
+                    };
+                    remoteTracks.push(newTrack);
+                }
+            }
+        }
+
+        updateSyncProgress(15, 'ローカルデータを読み込み中...');
         const localTracks    = await getAllTracksFromDBRaw();
         const localPlaylists = await getAllPlaylistsFromDBRaw();
+
         const localTrackMap    = new Map(localTracks.map(t  => [t.id, t]));
         const localPlaylistMap = new Map(localPlaylists.map(p => [p.id, p]));
 
-        // ── Driveマスターの差分解決 ──
-        updateSyncProgress(17, 'ファイルの差分を解決中...');
-        
-        // 1. Drive上で直接削除されたファイルの検知
-        for (const lTrack of localTrackMap.values()) {
-            if (!lTrack.deleted && lTrack.driveFileId && !driveAudioFileIds.has(lTrack.driveFileId)) {
-                lTrack.deleted = true;
-                lTrack.updatedAt = Date.now();
-                lTrack.driveFileId = null;
-                await saveTrackToDB(lTrack);
-                await deleteBlobFromDB(lTrack.id);
-                await deleteThumbFromDB(lTrack.id);
-                thumbCache.delete(lTrack.id);
-            }
-        }
-
-        // 2. Driveに直接アップロードされた新規ファイルの検知
-        const localDriveIds = new Set([...localTrackMap.values()].map(t => t.driveFileId).filter(Boolean));
-        for (const dFile of driveAudioFiles) {
-            if (!localDriveIds.has(dFile.id)) {
-                const newTrack = {
-                    id: 'track_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9),
-                    fileName: dFile.name,
-                    title: dFile.name.replace(/\.[^/.]+$/, ''),
-                    artist: '不明なアーティスト',
-                    date: '', tags: [],
-                    addedAt: Date.now(), sortOrder: Date.now(), updatedAt: Date.now(),
-                    deleted: false,
-                    driveFileId: dFile.id,
-                    thumbDriveId: null
-                };
-                await saveTrackToDB(newTrack);
-                localTrackMap.set(newTrack.id, newTrack);
-            }
-        }
-
-        // ── 月次ログ同期 ──
-        updateSyncProgress(19, 'ログデータを同期中...');
+        updateSyncProgress(16, 'ログデータを同期中...');
         await syncLogsWithDrive(folderId);
 
-        // ── タグ順序マージ ──
         if (remoteTagOrder.length > 0) {
-            remoteTagOrder.forEach(t => { if (!appState.tagOrder.includes(t)) appState.tagOrder.push(t); });
+            remoteTagOrder.forEach(t => {
+                if (!appState.tagOrder.includes(t)) appState.tagOrder.push(t);
+            });
             syncTagOrder();
         }
 
-        // ── リモート→ローカル メタデータ同期 (JSON merge) ──
+        updateSyncProgress(18, 'メタデータを比較中...');
         for (const rTrack of remoteTracks) {
             const lTrack = localTrackMap.get(rTrack.id);
             if (!lTrack) {
@@ -1696,56 +1660,53 @@ async function performDriveSync() {
             }
         }
 
-        // ── サムネイルDL（必要なもののみ）──
         const thumbsToDownload = [];
-        for (const lTrack of localTrackMap.values()) {
-            if (lTrack.deleted || !lTrack.thumbDriveId) continue;
-            if (!thumbCache.has(lTrack.id)) {
-                const existing = await getThumbFromDB(lTrack.id);
-                if (!existing) thumbsToDownload.push(lTrack);
+        for (const rTrack of remoteTracks) {
+            if (rTrack.deleted || !rTrack.thumbDriveId) continue;
+            if (!thumbCache.has(rTrack.id)) {
+                const existing = await getThumbFromDB(rTrack.id);
+                if (!existing) thumbsToDownload.push(rTrack);
             }
         }
 
         const thumbTotal = thumbsToDownload.length;
         for (let i = 0; i < thumbsToDownload.length; i++) {
-            const lTrack = thumbsToDownload[i];
-            const pct = 20 + Math.round(((i + 1) / Math.max(thumbTotal, 1)) * 15);
-            updateSyncProgress(pct, `サムネDL中 (${i+1}/${thumbTotal})`);
-            try {
-                const res = await driveGet(`https://www.googleapis.com/drive/v3/files/${lTrack.thumbDriveId}?alt=media`);
-                if (res.ok) {
-                    const blob   = await res.blob();
-                    const reader = new FileReader();
-                    const dataUrl = await new Promise(r => { reader.onload = e => r(e.target.result); reader.readAsDataURL(blob); });
-                    await saveThumbToDB(lTrack.id, dataUrl);
-                    thumbCache.set(lTrack.id, dataUrl);
-                } else { errCount++; }
-            } catch (e) { errCount++; console.warn('Thumb DL fail', e); }
+            const rTrack = thumbsToDownload[i];
+            const pct = 20 + Math.round(((i + 1) / Math.max(thumbTotal, 1)) * 25);
+            updateSyncProgress(pct, `サムネイルDL中 (${i+1}/${thumbTotal}): ${rTrack.title}`);
+
+            const res = await driveGet(`https://www.googleapis.com/drive/v3/files/${rTrack.thumbDriveId}?alt=media`);
+            if (res.ok) {
+                const blob   = await res.blob();
+                const reader = new FileReader();
+                const dataUrl = await new Promise(r => { reader.onload = e => r(e.target.result); reader.readAsDataURL(blob); });
+                await saveThumbToDB(rTrack.id, dataUrl);
+                thumbCache.set(rTrack.id, dataUrl);
+            }
         }
 
-        // ── 音声DL（tracksToDownload）──
         const tracksToDownload = [];
-        for (const lTrack of localTrackMap.values()) {
-            if (lTrack.deleted || appState.isStreaming || !lTrack.driveFileId) continue;
-            const existingBlob = await getBlobFromDB(lTrack.id);
-            if (!existingBlob) tracksToDownload.push(lTrack);
+        for (const rTrack of remoteTracks) {
+            if (rTrack.deleted || appState.isStreaming || !rTrack.driveFileId) continue;
+            const lTrack = localTrackMap.get(rTrack.id);
+            if (!lTrack) { tracksToDownload.push(rTrack); continue; }
+            const existingBlob = await getBlobFromDB(rTrack.id);
+            if (!existingBlob) tracksToDownload.push(rTrack);
         }
 
         const dlTotal = tracksToDownload.length;
         for (let i = 0; i < tracksToDownload.length; i++) {
-            const lTrack = tracksToDownload[i];
-            const pct    = 35 + Math.round(((i + 1) / Math.max(dlTotal, 1)) * 30);
-            updateSyncProgress(pct, `音声DL中 (${i+1}/${dlTotal}): ${lTrack.title}`);
+            const rTrack = tracksToDownload[i];
+            const pct    = 45 + Math.round(((i + 1) / Math.max(dlTotal, 1)) * 20);
+            updateSyncProgress(pct, `音声DL中 (${i+1}/${dlTotal}): ${rTrack.title}`);
             setSyncState({ phase: 'downloading', uploadedIds, dlIndex: i });
-            try {
-                const blob = await downloadFileFromDrive(lTrack.driveFileId);
-                if (blob) {
-                    await saveBlobToDB(lTrack.id, blob, lTrack.fileName || lTrack.title, blob.type);
-                } else { errCount++; }
-            } catch (e) { errCount++; console.warn('Blob DL fail', e); }
+
+            const blob = await downloadFileFromDrive(rTrack.driveFileId);
+            if (blob) {
+                await saveBlobToDB(rTrack.id, blob, rTrack.fileName || rTrack.title, blob.type);
+            }
         }
 
-        // ── アップロードフェーズ ──
         const tracksToUpload = [];
         for (const lTrack of localTrackMap.values()) {
             if (!lTrack.deleted && !lTrack.driveFileId) {
@@ -1763,53 +1724,58 @@ async function performDriveSync() {
             updateSyncProgress(pct, `音声UP中 (${i+1}/${ulTotal}): ${lTrack.title}`);
             setSyncState({ phase: 'uploading', uploadedIds, ulIndex: i });
 
-            try {
-                const fileId = await uploadFileToDrive(blobEntry, lTrack.fileName || lTrack.title, blobEntry.type || 'audio/mpeg', folderId);
-                lTrack.driveFileId = fileId;
-                lTrack.updatedAt   = Date.now();
-                await saveTrackToDB(lTrack);
-                uploadedIds.push(lTrack.id);
-                setSyncState({ phase: 'uploading', uploadedIds });
-            } catch (e) { errCount++; console.warn('Blob UP fail', e); }
+            const fileId = await uploadFileToDrive(blobEntry, lTrack.fileName || lTrack.title, blobEntry.type || 'audio/mpeg', folderId);
+            lTrack.driveFileId = fileId;
+            lTrack.updatedAt   = Date.now();
+            await saveTrackToDB(lTrack);
+            uploadedIds.push(lTrack.id);
+            setSyncState({ phase: 'uploading', uploadedIds });
         }
 
-        // ── サムネイルUP ──
-        updateSyncProgress(85, 'サムネイルUP中...');
+        updateSyncProgress(85, 'サムネイルをアップロード中...');
         for (const lTrack of localTrackMap.values()) {
             if (lTrack.deleted || lTrack.thumbDriveId) continue;
             const dataUrl = thumbCache.get(lTrack.id) || await getThumbFromDB(lTrack.id);
             if (!dataUrl) continue;
-            try {
-                const blob = dataUrlToBlob(dataUrl);
-                if (!blob) continue;
-                const thumbFileId = await uploadFileToDrive(blob, `thumb_${lTrack.id}.jpg`, 'image/jpeg', thumbFolderId);
-                lTrack.thumbDriveId = thumbFileId;
-                lTrack.updatedAt    = Date.now();
-                await saveTrackToDB(lTrack);
-                localTrackMap.set(lTrack.id, lTrack);
-            } catch(e) { errCount++; console.warn('Thumb UP fail', e); }
+            const blob = dataUrlToBlob(dataUrl);
+            if (!blob) continue;
+            const thumbFileId = await uploadFileToDrive(blob, `thumb_${lTrack.id}.jpg`, 'image/jpeg', thumbFolderId);
+            lTrack.thumbDriveId = thumbFileId;
+            lTrack.updatedAt    = Date.now();
+            await saveTrackToDB(lTrack);
+            localTrackMap.set(lTrack.id, lTrack);
         }
 
-        // ── プレイリスト同期 ──
         for (const rPl of remotePlaylists) {
             const lPl = localPlaylistMap.get(rPl.id);
-            if (!lPl || (rPl.updatedAt || 0) > (lPl.updatedAt || 0)) {
+            if (!lPl) { await savePlaylistToDB(rPl); localPlaylistMap.set(rPl.id, rPl); }
+            else if ((rPl.updatedAt || 0) > (lPl.updatedAt || 0)) {
                 await savePlaylistToDB(rPl); localPlaylistMap.set(rPl.id, rPl);
             }
         }
 
-        // ── JSON アップロード ──
         updateSyncProgress(88, 'メタデータを保存中...');
         setSyncState({ phase: 'json', uploadedIds });
 
         const finalTracks = Array.from(localTrackMap.values()).map(t => {
-            const { ...rest } = t; return rest;
+            const { ...rest } = t;
+            return rest;
         });
-        await uploadJsonToDrive({ tracks: finalTracks, version: 6, lastSyncedAt: Date.now() }, 'tracks_meta.json', folderId, metaFileId);
-        await uploadJsonToDrive({ playlists: Array.from(localPlaylistMap.values()), lastSyncedAt: Date.now() }, 'playlists.json', folderId, plFileId);
-        await uploadJsonToDrive({ tagOrder: appState.tagOrder, lastSyncedAt: Date.now() }, 'settings.json', folderId, settingsFileId);
+        await uploadJsonToDrive(
+            { tracks: finalTracks, version: 6, lastSyncedAt: Date.now() },
+            'tracks_meta.json', folderId, metaFileId
+        );
 
-        // ── ライブラリ再ロード ──
+        await uploadJsonToDrive(
+            { playlists: Array.from(localPlaylistMap.values()), lastSyncedAt: Date.now() },
+            'playlists.json', folderId, plFileId
+        );
+
+        await uploadJsonToDrive(
+            { tagOrder: appState.tagOrder, lastSyncedAt: Date.now() },
+            'settings.json', folderId, settingsFileId
+        );
+
         updateSyncProgress(95, 'ライブラリを更新中...');
         await loadLibrary();
         await loadPlaylists();
@@ -1817,9 +1783,7 @@ async function performDriveSync() {
         clearSyncState();
         resetPendingOps();
         updateSyncProgress(100, '同期完了');
-        
-        if (errCount > 0) showToast(`同期完了 (一部エラー: ${errCount}件)`, 'warning', 4000);
-        else showToast('同期が完了しました', 'success');
+        showToast('同期が完了しました', 'success');
 
     } catch (error) {
         console.error('同期エラー:', error);
@@ -1830,9 +1794,17 @@ async function performDriveSync() {
     }
 }
 
+async function driveDelete(fileId) {
+    return fetch(`https://www.googleapis.com/drive/v3/files/${fileId}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${gapiAccessToken}` }
+    });
+}
+
 async function syncLogsWithDrive(folderId) {
     const logFolderId = await getOrCreateSubFolder('logs', folderId);
     const localLogs   = await getAllLogsFromDB();
+
     const monthGroups = {};
     localLogs.forEach(l => {
         const d   = new Date(l.timestamp);
@@ -1842,6 +1814,7 @@ async function syncLogsWithDrive(folderId) {
     });
 
     const localLogIds = new Set(localLogs.map(l => String(l.id)));
+
     const now    = new Date();
     const months = [];
     for (let i = 0; i < 3; i++) {
@@ -1947,9 +1920,8 @@ async function downloadFileFromDrive(fileId) {
     } catch (e) { console.error('ファイルダウンロード失敗:', e); }
     return null;
 }
-
 // ─────────────────────────────────────────────
-// DB 初期化
+// DB 初期化（v5: blobs / thumbs ストア追加）
 // ─────────────────────────────────────────────
 function initDB() {
     return new Promise((resolve, reject) => {
@@ -1958,11 +1930,18 @@ function initDB() {
         request.onsuccess = (e) => { db = e.target.result; resolve(db); };
         request.onupgradeneeded = (e) => {
             const database    = e.target.result;
-            if (!database.objectStoreNames.contains('tracks')) database.createObjectStore('tracks', { keyPath: 'id' });
-            if (!database.objectStoreNames.contains('playlists')) database.createObjectStore('playlists', { keyPath: 'id' });
-            if (!database.objectStoreNames.contains('logs')) database.createObjectStore('logs', { keyPath: 'id', autoIncrement: true });
-            if (!database.objectStoreNames.contains('blobs')) database.createObjectStore('blobs', { keyPath: 'id' });
-            if (!database.objectStoreNames.contains('thumbs')) database.createObjectStore('thumbs', { keyPath: 'id' });
+
+            if (!database.objectStoreNames.contains('tracks'))
+                database.createObjectStore('tracks',    { keyPath: 'id' });
+            if (!database.objectStoreNames.contains('playlists'))
+                database.createObjectStore('playlists', { keyPath: 'id' });
+            if (!database.objectStoreNames.contains('logs'))
+                database.createObjectStore('logs',      { keyPath: 'id', autoIncrement: true });
+
+            if (!database.objectStoreNames.contains('blobs'))
+                database.createObjectStore('blobs', { keyPath: 'id' });
+            if (!database.objectStoreNames.contains('thumbs'))
+                database.createObjectStore('thumbs', { keyPath: 'id' });
         };
     });
 }
@@ -1970,21 +1949,28 @@ function initDB() {
 async function migrateV4ToV5IfNeeded() {
     const MIGRATED_KEY = 'harmonia_migrated_v5';
     if (localStorage.getItem(MIGRATED_KEY)) return;
+
     const allTracks = await getAllTracksFromDBRaw();
     let migrated = 0;
     for (const track of allTracks) {
         let changed = false;
         if (track.fileBlob) {
             await saveBlobToDB(track.id, track.fileBlob, track.fileName || track.title, track.fileBlob.type);
-            delete track.fileBlob; changed = true;
+            delete track.fileBlob;
+            changed = true;
         }
         if (track.thumbnailDataUrl) {
             await saveThumbToDB(track.id, track.thumbnailDataUrl);
             thumbCache.set(track.id, track.thumbnailDataUrl);
-            delete track.thumbnailDataUrl; changed = true;
+            delete track.thumbnailDataUrl;
+            changed = true;
         }
-        if (changed) { await saveTrackToDB(track); migrated++; }
+        if (changed) {
+            await saveTrackToDB(track);
+            migrated++;
+        }
     }
+    if (migrated > 0) console.log(`[Migration] v4→v5: ${migrated}曲 移行完了`);
     localStorage.setItem(MIGRATED_KEY, '1');
 }
 
@@ -1995,15 +1981,8 @@ function saveTrackToDB(track) {
     return new Promise((resolve, reject) => {
         const tx  = db.transaction(['tracks'], 'readwrite');
         const req = tx.objectStore('tracks').put(track);
-        req.onsuccess = () => resolve(); req.onerror = (e) => reject(e.target.error);
-    });
-}
-
-function getTrackFromDB(id) {
-    return new Promise((resolve, reject) => {
-        const tx  = db.transaction(['tracks'], 'readonly');
-        const req = tx.objectStore('tracks').get(id);
-        req.onsuccess = () => resolve(req.result); req.onerror = (e) => reject(e.target.error);
+        req.onsuccess = () => resolve();
+        req.onerror   = (e) => reject(e.target.error);
     });
 }
 
@@ -2011,7 +1990,8 @@ function savePlaylistToDB(pl) {
     return new Promise((resolve, reject) => {
         const tx  = db.transaction(['playlists'], 'readwrite');
         const req = tx.objectStore('playlists').put(pl);
-        req.onsuccess = () => resolve(); req.onerror = e => reject(e.target.error);
+        req.onsuccess = () => resolve();
+        req.onerror   = e => reject(e.target.error);
     });
 }
 
@@ -2019,7 +1999,8 @@ function getAllTracksFromDBRaw() {
     return new Promise((resolve, reject) => {
         const tx  = db.transaction(['tracks'], 'readonly');
         const req = tx.objectStore('tracks').getAll();
-        req.onsuccess = () => resolve(req.result); req.onerror = (e) => reject(e.target.error);
+        req.onsuccess = () => resolve(req.result);
+        req.onerror   = (e) => reject(e.target.error);
     });
 }
 
@@ -2027,7 +2008,8 @@ function getAllPlaylistsFromDBRaw() {
     return new Promise((resolve, reject) => {
         const tx  = db.transaction(['playlists'], 'readonly');
         const req = tx.objectStore('playlists').getAll();
-        req.onsuccess = () => resolve(req.result); req.onerror = (e) => reject(e.target.error);
+        req.onsuccess = () => resolve(req.result);
+        req.onerror   = (e) => reject(e.target.error);
     });
 }
 
@@ -2035,7 +2017,8 @@ function saveBlobToDB(id, blob, fileName, mimeType) {
     return new Promise((resolve, reject) => {
         const tx  = db.transaction(['blobs'], 'readwrite');
         const req = tx.objectStore('blobs').put({ id, blob, fileName, mimeType });
-        req.onsuccess = () => resolve(); req.onerror = e => reject(e.target.error);
+        req.onsuccess = () => resolve();
+        req.onerror   = e => reject(e.target.error);
     });
 }
 
@@ -2043,7 +2026,8 @@ function getBlobFromDB(id) {
     return new Promise((resolve, reject) => {
         const tx  = db.transaction(['blobs'], 'readonly');
         const req = tx.objectStore('blobs').get(id);
-        req.onsuccess = () => resolve(req.result ? req.result.blob : null); req.onerror = e => reject(e.target.error);
+        req.onsuccess = () => resolve(req.result ? req.result.blob : null);
+        req.onerror   = e => reject(e.target.error);
     });
 }
 
@@ -2051,7 +2035,8 @@ function deleteBlobFromDB(id) {
     return new Promise((resolve, reject) => {
         const tx  = db.transaction(['blobs'], 'readwrite');
         const req = tx.objectStore('blobs').delete(id);
-        req.onsuccess = () => resolve(); req.onerror = e => reject(e.target.error);
+        req.onsuccess = () => resolve();
+        req.onerror   = e => reject(e.target.error);
     });
 }
 
@@ -2059,7 +2044,8 @@ function saveThumbToDB(id, dataUrl) {
     return new Promise((resolve, reject) => {
         const tx  = db.transaction(['thumbs'], 'readwrite');
         const req = tx.objectStore('thumbs').put({ id, dataUrl });
-        req.onsuccess = () => resolve(); req.onerror = e => reject(e.target.error);
+        req.onsuccess = () => resolve();
+        req.onerror   = e => reject(e.target.error);
     });
 }
 
@@ -2067,7 +2053,8 @@ function getThumbFromDB(id) {
     return new Promise((resolve, reject) => {
         const tx  = db.transaction(['thumbs'], 'readonly');
         const req = tx.objectStore('thumbs').get(id);
-        req.onsuccess = () => resolve(req.result ? req.result.dataUrl : null); req.onerror = e => reject(e.target.error);
+        req.onsuccess = () => resolve(req.result ? req.result.dataUrl : null);
+        req.onerror   = e => reject(e.target.error);
     });
 }
 
@@ -2075,7 +2062,8 @@ function deleteThumbFromDB(id) {
     return new Promise((resolve, reject) => {
         const tx  = db.transaction(['thumbs'], 'readwrite');
         const req = tx.objectStore('thumbs').delete(id);
-        req.onsuccess = () => resolve(); req.onerror = e => reject(e.target.error);
+        req.onsuccess = () => resolve();
+        req.onerror   = e => reject(e.target.error);
     });
 }
 
@@ -2171,64 +2159,6 @@ async function saveManualOrder() {
 }
 
 // ─────────────────────────────────────────────
-// 曲削除（楽観的UI＋削除待ちキュー）
-// ─────────────────────────────────────────────
-async function deleteTracksCompletely(trackIds) {
-    if (!confirm(`${trackIds.length}曲をライブラリから完全に削除しますか？\nこの操作は元に戻せません。`)) return;
-
-    // 1. Pending Deletes（削除待ちキュー）に登録
-    const pendingDeletes = JSON.parse(localStorage.getItem(PENDING_DELETES_KEY) || '[]');
-    const tracksToDelete = appState.tracks.filter(t => trackIds.includes(t.id));
-    tracksToDelete.forEach(t => {
-        if (t.driveFileId || t.thumbDriveId) {
-            pendingDeletes.push({ driveFileId: t.driveFileId, thumbDriveId: t.thumbDriveId });
-        }
-    });
-    localStorage.setItem(PENDING_DELETES_KEY, JSON.stringify(pendingDeletes));
-
-    // 2. Optimistic UI 更新（即座に画面から消す）
-    appState.tracks = appState.tracks.filter(t => !trackIds.includes(t.id));
-    appState.currentQueue = appState.currentQueue.filter(t => !trackIds.includes(t.id));
-    appState.selectedMainTracks.clear();
-    appState.editSelectedTracks.clear();
-    renderVirtualTrackList();
-    renderVirtualEditGrid();
-    updateBulkActionBar();
-    updateEditBulkBar();
-    showToast(`${trackIds.length}曲 を削除しました`);
-
-    // 3. バックグラウンドでDBクリーンアップ
-    setTimeout(async () => {
-        // プレイリストから除外
-        const playlists = await getAllPlaylistsFromDBRaw();
-        for (const pl of playlists) {
-            let changed = false;
-            trackIds.forEach(id => {
-                const i = pl.trackIds.indexOf(id);
-                if (i !== -1) { pl.trackIds.splice(i, 1); changed = true; }
-            });
-            if (changed) { pl.updatedAt = Date.now(); await savePlaylistToDB(pl); }
-        }
-        
-        for (const id of trackIds) {
-            const track = await getTrackFromDB(id);
-            if (track) {
-                track.deleted   = true;
-                track.updatedAt = Date.now();
-                track.driveFileId = null;  // Drive処理はキューに任せる
-                track.thumbDriveId = null;
-                await saveTrackToDB(track);
-            }
-            await deleteBlobFromDB(id);
-            await deleteThumbFromDB(id);
-            thumbCache.delete(id);
-        }
-        await loadPlaylists();
-        autoSync();
-    }, 50);
-}
-
-// ─────────────────────────────────────────────
 // ドラッグ&ドロップ / ファイル読み込み
 // ─────────────────────────────────────────────
 function initDragAndDrop() {
@@ -2240,7 +2170,7 @@ function initDragAndDrop() {
 
     if (dropZone) {
         dropZone.addEventListener('dragover',  (e) => { e.preventDefault(); dropZone.classList.add('dragover'); });
-        dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+        dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'); );
         dropZone.addEventListener('drop', (e) => {
             e.preventDefault(); dropZone.classList.remove('dragover');
             if (e.dataTransfer.files) handleFiles(e.dataTransfer.files);
@@ -2251,7 +2181,7 @@ function initDragAndDrop() {
     if (dropZoneSmall) {
         dropZoneSmall.addEventListener('click', () => fileInput && fileInput.click());
         dropZoneSmall.addEventListener('dragover',  (e) => { e.preventDefault(); dropZoneSmall.classList.add('dragover'); });
-        dropZoneSmall.addEventListener('dragleave', () => dropZoneSmall.classList.remove('dragover'));
+        dropZoneSmall.addEventListener('dragleave', () => dropZoneSmall.classList.remove('dragover'); );
         dropZoneSmall.addEventListener('drop', (e) => {
             e.preventDefault(); dropZoneSmall.classList.remove('dragover');
             if (e.dataTransfer.files) handleFiles(e.dataTransfer.files);
@@ -2462,7 +2392,7 @@ async function deletePlaylist(playlistId, playlistName) {
 }
 
 // ─────────────────────────────────────────────
-// 編集ページ
+// 編集ページ：サブタブ（曲一覧 / タグ管理）
 // ─────────────────────────────────────────────
 function initEditSubTabs() {
     document.querySelectorAll('.edit-sub-tab').forEach(tab => {
@@ -2494,6 +2424,9 @@ function initEditSubTabs() {
     });
 }
 
+// ─────────────────────────────────────────────
+// タグ管理ビュー
+// ─────────────────────────────────────────────
 function initTagManagement() {
     const addBtn = document.getElementById('add-global-tag-btn');
     if (addBtn) {
@@ -2549,7 +2482,9 @@ function renderTagManagement() {
             const pos = appState.tagOrder.indexOf(text);
             if (pos > 0) {
                 [appState.tagOrder[pos - 1], appState.tagOrder[pos]] = [appState.tagOrder[pos], appState.tagOrder[pos - 1]];
-                saveTagOrderToStorage(); renderTagManagement(); autoSync();
+                saveTagOrderToStorage();
+                renderTagManagement();
+                autoSync();
             }
         });
 
@@ -2562,7 +2497,9 @@ function renderTagManagement() {
             const pos = appState.tagOrder.indexOf(text);
             if (pos < appState.tagOrder.length - 1) {
                 [appState.tagOrder[pos], appState.tagOrder[pos + 1]] = [appState.tagOrder[pos + 1], appState.tagOrder[pos]];
-                saveTagOrderToStorage(); renderTagManagement(); autoSync();
+                saveTagOrderToStorage();
+                renderTagManagement();
+                autoSync();
             }
         });
 
@@ -2578,10 +2515,15 @@ function renderTagManagement() {
         delBtn.innerHTML = '<span class="material-symbols-rounded">delete</span>';
         delBtn.addEventListener('click', () => deleteGlobalTag(text));
 
-        actions.appendChild(upBtn); actions.appendChild(downBtn);
-        actions.appendChild(editBtn); actions.appendChild(delBtn);
+        actions.appendChild(upBtn);
+        actions.appendChild(downBtn);
+        actions.appendChild(editBtn);
+        actions.appendChild(delBtn);
 
-        li.appendChild(colorDot); li.appendChild(nameEl); li.appendChild(countEl); li.appendChild(actions);
+        li.appendChild(colorDot);
+        li.appendChild(nameEl);
+        li.appendChild(countEl);
+        li.appendChild(actions);
         listEl.appendChild(li);
     });
 }
@@ -2625,8 +2567,12 @@ function openTagCreateModal() {
         if (appState.allKnownTags.has(text)) { showToast('同名のタグが既に存在します', 'warning'); return; }
         appState.allKnownTags.set(text, { text, color });
         appState.tagOrder.push(text);
-        saveTagOrderToStorage(); updateTagsDatalist(); renderTagManagement();
-        modal.remove(); showToast(`タグ「${text}」を追加しました`, 'success'); autoSync();
+        saveTagOrderToStorage();
+        updateTagsDatalist();
+        renderTagManagement();
+        modal.remove();
+        showToast(`タグ「${text}」を追加しました`, 'success');
+        autoSync();
     });
 }
 
@@ -2667,13 +2613,15 @@ function openTagEditGlobalModal(text, currentColor) {
         const newText  = modal.querySelector('#tag-edit-g-name').value.trim();
         const newColor = modal.querySelector('#tag-edit-g-color').value;
         if (!newText) { showToast('タグ名を入力してください', 'error'); return; }
-        modal.remove(); await renameGlobalTag(text, newText, newColor);
+        modal.remove();
+        await renameGlobalTag(text, newText, newColor);
     });
 }
 
 async function renameGlobalTag(oldText, newText, newColor) {
     appState.allKnownTags.delete(oldText);
     appState.allKnownTags.set(newText, { text: newText, color: newColor });
+
     const pos = appState.tagOrder.indexOf(oldText);
     if (pos >= 0) appState.tagOrder[pos] = newText;
     else appState.tagOrder.push(newText);
@@ -2688,14 +2636,21 @@ async function renameGlobalTag(oldText, newText, newColor) {
             if (tText === oldText) { changed = true; return { text: newText, color: newColor }; }
             return t;
         });
-        if (changed) { track.updatedAt = Date.now(); await saveTrackToDB(track); }
+        if (changed) {
+            track.updatedAt = Date.now();
+            await saveTrackToDB(track);
+        }
     }
-    await loadLibrary(); renderTagManagement(); renderVirtualEditGrid();
-    showToast(`タグ「${oldText}」→「${newText}」に更新しました`, 'success'); autoSync();
+    await loadLibrary();
+    renderTagManagement();
+    renderVirtualEditGrid();
+    showToast(`タグ「${oldText}」→「${newText}」に更新しました`, 'success');
+    autoSync();
 }
 
 async function deleteGlobalTag(text) {
     if (!confirm(`タグ「${text}」をすべての楽曲から削除しますか？`)) return;
+
     appState.allKnownTags.delete(text);
     appState.tagOrder = appState.tagOrder.filter(t => t !== text);
     saveTagOrderToStorage();
@@ -2705,13 +2660,25 @@ async function deleteGlobalTag(text) {
         if (!track.tags) continue;
         const before = track.tags.length;
         track.tags = track.tags.filter(t => (typeof t === 'string' ? t : t.text) !== text);
-        if (track.tags.length !== before) { track.updatedAt = Date.now(); await saveTrackToDB(track); }
+        if (track.tags.length !== before) {
+            track.updatedAt = Date.now();
+            await saveTrackToDB(track);
+        }
     }
-    await loadLibrary(); renderTagManagement(); renderVirtualEditGrid();
-    showToast(`タグ「${text}」を削除しました`, 'success'); autoSync();
+    await loadLibrary();
+    renderTagManagement();
+    renderVirtualEditGrid();
+    showToast(`タグ「${text}」を削除しました`, 'success');
+    autoSync();
 }
 
-function getEditGridCols() { return window.matchMedia('(max-width: 768px)').matches ? 2 : 4; }
+// ─────────────────────────────────────────────
+// 編集ページ（仮想スクロールグリッド）
+// ─────────────────────────────────────────────
+function getEditGridCols() {
+    return window.matchMedia('(max-width: 768px)').matches ? 2 : 4;
+}
+
 function calcEditGridRowH(containerW, cols) {
     const padH  = window.matchMedia('(max-width: 768px)').matches ? 28 : 48;
     const gapH  = EDIT_GRID_GAP * (cols - 1);
@@ -2731,8 +2698,10 @@ function renderVirtualEditGrid() {
     if (emptyEl) emptyEl.classList.toggle('show', displayTracks.length === 0);
 
     if (displayTracks.length === 0) {
-        inner.style.height = '0px'; rendered.innerHTML = '';
-        rendered.classList.toggle('edit-select-mode', appState.editIsSelectMode);
+        inner.style.height = '0px';
+        rendered.innerHTML = '';
+        if (appState.editIsSelectMode) rendered.classList.add('edit-select-mode');
+        else rendered.classList.remove('edit-select-mode');
         return;
     }
 
@@ -2742,6 +2711,7 @@ function renderVirtualEditGrid() {
     const totalH    = EDIT_SCROLL_TOP_PAD + rowCount * rowH + Math.max(0, rowCount - 1) * EDIT_ROW_GAP + 16;
 
     inner.style.height = totalH + 'px';
+
     const scrollTop  = outer.scrollTop;
     const containerH = outer.clientHeight || 400;
 
@@ -2752,7 +2722,9 @@ function renderVirtualEditGrid() {
     const topOffset = EDIT_SCROLL_TOP_PAD + startRow * rowUnit;
     rendered.style.top = topOffset + 'px';
     rendered.innerHTML = '';
-    rendered.classList.toggle('edit-select-mode', appState.editIsSelectMode);
+
+    if (appState.editIsSelectMode) rendered.classList.add('edit-select-mode');
+    else rendered.classList.remove('edit-select-mode');
 
     for (let row = startRow; row <= endRow; row++) {
         const rowDiv = document.createElement('div');
@@ -2807,12 +2779,16 @@ function buildEditCard(track) {
     card.addEventListener('click', () => {
         if (appState.editIsSelectMode) {
             if (appState.editSelectedTracks.has(track.id)) {
-                appState.editSelectedTracks.delete(track.id); card.classList.remove('selected');
+                appState.editSelectedTracks.delete(track.id);
+                card.classList.remove('selected');
             } else {
-                appState.editSelectedTracks.add(track.id); card.classList.add('selected');
+                appState.editSelectedTracks.add(track.id);
+                card.classList.add('selected');
             }
             updateEditBulkBar();
-        } else { openEditModal([track.id]); }
+        } else {
+            openEditModal([track.id]);
+        }
     });
     return card;
 }
@@ -2843,6 +2819,9 @@ function getEditDisplayTracks() {
     return displayTracks;
 }
 
+// ─────────────────────────────────────────────
+// プレイヤーコントロール
+// ─────────────────────────────────────────────
 function initPlayerControls() {
     const playBtn    = document.getElementById('ctrl-play');
     const prevBtn    = document.getElementById('ctrl-prev');
@@ -2883,18 +2862,27 @@ function initPlayerControls() {
     audioPlayer.addEventListener('timeupdate', () => {
         if (!audioPlayer.duration) return;
         const pct = (audioPlayer.currentTime / audioPlayer.duration) * 100;
-        if (seekBar) { seekBar.value = pct; seekBar.style.background = `linear-gradient(to right, var(--accent) ${pct}%, var(--border) ${pct}%)`; }
+
+        if (seekBar) {
+            seekBar.value = pct;
+            seekBar.style.background = `linear-gradient(to right, var(--accent) ${pct}%, var(--border) ${pct}%)`;
+        }
         const fpSeek = document.getElementById('fp-seek-bar');
-        if (fpSeek) { fpSeek.value = pct; fpSeek.style.background = `linear-gradient(to right, var(--accent) ${pct}%, var(--border) ${pct}%)`; }
+        if (fpSeek) {
+            fpSeek.value = pct;
+            fpSeek.style.background = `linear-gradient(to right, var(--accent) ${pct}%, var(--border) ${pct}%)`;
+        }
 
         const cur = formatTime(audioPlayer.currentTime);
         const tot = formatTime(audioPlayer.duration);
         const tcEl = document.getElementById('time-current');
         const ttEl = document.getElementById('time-total');
-        if (tcEl) tcEl.textContent = cur; if (ttEl) ttEl.textContent = tot;
+        if (tcEl) tcEl.textContent = cur;
+        if (ttEl) ttEl.textContent = tot;
         const fpCur = document.getElementById('fp-time-current');
         const fpTot = document.getElementById('fp-time-total');
-        if (fpCur) fpCur.textContent = cur; if (fpTot) fpTot.textContent = tot;
+        if (fpCur) fpCur.textContent = cur;
+        if (fpTot) fpTot.textContent = tot;
 
         const miniBar = document.getElementById('mini-progress-bar');
         if (miniBar) miniBar.style.width = `${pct}%`;
@@ -2903,11 +2891,16 @@ function initPlayerControls() {
     audioPlayer.addEventListener('ended', () => { handleTrackEnd(); });
 }
 
+// ─────────────────────────────────────────────
+// iOS バックグラウンド再生チェッカー
+// ─────────────────────────────────────────────
 function startBgEndChecker() {
     stopBgEndChecker();
     bgEndChecker = setInterval(() => {
         if (!appState.isPlaying || !audioPlayer.duration) return;
-        if (audioPlayer.paused && audioPlayer.currentTime > 0 && audioPlayer.currentTime >= audioPlayer.duration - 0.3) {
+        if (audioPlayer.paused &&
+            audioPlayer.currentTime > 0 &&
+            audioPlayer.currentTime >= audioPlayer.duration - 0.3) {
             handleTrackEnd();
         }
     }, 1000);
@@ -2920,27 +2913,42 @@ function stopBgEndChecker() {
 function handleTrackEnd() {
     if (isHandlingTrackEnd) return;
     isHandlingTrackEnd = true;
-    stopBgEndChecker(); stopPlaybackTracking();
+    stopBgEndChecker();
+    stopPlaybackTracking();
+
     setTimeout(() => {
         try {
             if (appState.loopMode === 'one') {
                 audioPlayer.currentTime = 0;
                 audioPlayer.play().then(() => {
-                    appState.isPlaying = true; updatePlayButtonUI(); startPlaybackTracking(); startBgEndChecker();
-                }).catch(console.error).finally(() => { isHandlingTrackEnd = false; });
+                    appState.isPlaying = true;
+                    updatePlayButtonUI();
+                    startPlaybackTracking();
+                    startBgEndChecker();
+                }).catch(console.error)
+                .finally(() => { isHandlingTrackEnd = false; });
                 return;
             }
-            if (appState.loopMode === 'all') { isHandlingTrackEnd = false; playNext(); return; }
-            const hasNext = appState.isShuffled ? (appState.shufflePos < appState.shuffleOrder.length - 1) : (appState.currentTrackIndex < appState.currentQueue.length - 1);
+            if (appState.loopMode === 'all') {
+                isHandlingTrackEnd = false; playNext(); return;
+            }
+            const hasNext = appState.isShuffled
+                ? (appState.shufflePos < appState.shuffleOrder.length - 1)
+                : (appState.currentTrackIndex < appState.currentQueue.length - 1);
             if (hasNext) { isHandlingTrackEnd = false; playNext(); }
             else { appState.isPlaying = false; updatePlayButtonUI(); isHandlingTrackEnd = false; }
         } catch (e) { console.error('handleTrackEnd エラー:', e); isHandlingTrackEnd = false; }
     }, 50);
 }
 
+// ─────────────────────────────────────────────
+// 再生 / 停止 / 曲切り替え
+// ─────────────────────────────────────────────
 async function playTrack(index) {
     if (index < 0 || index >= appState.currentQueue.length) return;
-    isHandlingTrackEnd = false; stopBgEndChecker(); stopPlaybackTracking();
+    isHandlingTrackEnd = false;
+    stopBgEndChecker();
+    stopPlaybackTracking();
     const track = appState.currentQueue[index];
     appState.currentTrackIndex = index;
 
@@ -2951,40 +2959,60 @@ async function playTrack(index) {
     } else {
         const blob = await getBlobFromDB(track.id);
         if (blob) {
-            currentObjectUrl = URL.createObjectURL(blob); audioPlayer.src  = currentObjectUrl;
-        } else { showToast('音声ファイルが見つかりません', 'error'); return; }
+            currentObjectUrl = URL.createObjectURL(blob);
+            audioPlayer.src  = currentObjectUrl;
+        } else {
+            showToast('音声ファイルが見つかりません', 'error');
+            return;
+        }
     }
 
     audioPlayer.playbackRate = SPEED_OPTIONS[currentSpeedIndex];
     audioPlayer.play().then(() => {
         appState.isPlaying = true;
         if (appState.isShuffled && appState.shuffleOrder.length > 0) {
-            const pos = appState.shuffleOrder.indexOf(index); if (pos >= 0) appState.shufflePos = pos;
+            const pos = appState.shuffleOrder.indexOf(index);
+            if (pos >= 0) appState.shufflePos = pos;
         }
-        updatePlayerUI(track); renderVirtualTrackList();
+        updatePlayerUI(track);
+        renderVirtualTrackList();
         if (appState.isQueueOpen) renderQueuePanel();
-        startPlaybackTracking(); startBgEndChecker();
+        startPlaybackTracking();
+        startBgEndChecker();
     }).catch(e => console.error('再生エラー:', e));
 }
 
 function togglePlay() {
     if (appState.currentQueue.length === 0) return;
     if (appState.isPlaying) {
-        audioPlayer.pause(); appState.isPlaying = false; stopPlaybackTracking(); stopBgEndChecker();
+        audioPlayer.pause();
+        appState.isPlaying = false;
+        stopPlaybackTracking();
+        stopBgEndChecker();
     } else {
-        if (audioPlayer.src) { audioPlayer.play().then(() => { appState.isPlaying = true; startPlaybackTracking(); startBgEndChecker(); }); }
-        else { playTrack(0); }
+        if (audioPlayer.src) {
+            audioPlayer.play().then(() => {
+                appState.isPlaying = true;
+                startPlaybackTracking();
+                startBgEndChecker();
+            });
+        } else {
+            playTrack(0);
+        }
     }
-    updatePlayButtonUI(); renderVirtualTrackList();
+    updatePlayButtonUI();
+    renderVirtualTrackList();
 }
 
 function playNext() {
     if (appState.currentQueue.length === 0) return;
     let nextIndex;
     if (appState.isShuffled && appState.shuffleOrder.length > 0) {
-        appState.shufflePos = (appState.shufflePos + 1) % appState.shuffleOrder.length; nextIndex = appState.shuffleOrder[appState.shufflePos];
+        appState.shufflePos = (appState.shufflePos + 1) % appState.shuffleOrder.length;
+        nextIndex = appState.shuffleOrder[appState.shufflePos];
     } else {
-        nextIndex = appState.currentTrackIndex + 1; if (nextIndex >= appState.currentQueue.length) nextIndex = 0;
+        nextIndex = appState.currentTrackIndex + 1;
+        if (nextIndex >= appState.currentQueue.length) nextIndex = 0;
     }
     playTrack(nextIndex);
 }
@@ -2994,9 +3022,11 @@ function playPrev() {
     if (audioPlayer.currentTime > 3) { audioPlayer.currentTime = 0; return; }
     let prevIndex;
     if (appState.isShuffled && appState.shuffleOrder.length > 0) {
-        appState.shufflePos = (appState.shufflePos - 1 + appState.shuffleOrder.length) % appState.shuffleOrder.length; prevIndex = appState.shuffleOrder[appState.shufflePos];
+        appState.shufflePos = (appState.shufflePos - 1 + appState.shuffleOrder.length) % appState.shuffleOrder.length;
+        prevIndex = appState.shuffleOrder[appState.shufflePos];
     } else {
-        prevIndex = appState.currentTrackIndex - 1; if (prevIndex < 0) prevIndex = appState.currentQueue.length - 1;
+        prevIndex = appState.currentTrackIndex - 1;
+        if (prevIndex < 0) prevIndex = appState.currentQueue.length - 1;
     }
     playTrack(prevIndex);
 }
@@ -3012,52 +3042,99 @@ function updatePlayerUI(track) {
     if (artworkImage) {
         const cached = thumbCache.get(track.id);
         if (cached) {
-            artworkImage.style.backgroundImage = `url(${cached})`; artworkImage.innerHTML = '';
-            artworkImage.classList.add('has-art'); if (artworkBg) artworkBg.classList.add('visible');
+            artworkImage.style.backgroundImage = `url(${cached})`;
+            artworkImage.innerHTML = '';
+            artworkImage.classList.add('has-art');
+            if (artworkBg) artworkBg.classList.add('visible');
         } else {
-            artworkImage.style.backgroundImage = 'none'; artworkImage.innerHTML = '<span class="material-symbols-rounded">music_note</span>';
-            artworkImage.classList.remove('has-art'); if (artworkBg) artworkBg.classList.remove('visible');
+            artworkImage.style.backgroundImage = 'none';
+            artworkImage.innerHTML = '<span class="material-symbols-rounded">music_note</span>';
+            artworkImage.classList.remove('has-art');
+            if (artworkBg) artworkBg.classList.remove('visible');
             loadThumbFromDB(track.id).then(dataUrl => {
                 if (dataUrl && artworkImage.isConnected) {
-                    artworkImage.style.backgroundImage = `url(${dataUrl})`; artworkImage.innerHTML = '';
-                    artworkImage.classList.add('has-art'); if (artworkBg) artworkBg.classList.add('visible');
+                    artworkImage.style.backgroundImage = `url(${dataUrl})`;
+                    artworkImage.innerHTML = '';
+                    artworkImage.classList.add('has-art');
+                    if (artworkBg) artworkBg.classList.add('visible');
                 }
             });
         }
     }
 
-    updateMiniPlayer(track); updateFullscreenPlayer(track); updatePlayButtonUI();
+    updateMiniPlayer(track);
+    updateFullscreenPlayer(track);
+    updatePlayButtonUI();
 
     if ('mediaSession' in navigator) {
         const cached = thumbCache.get(track.id);
-        navigator.mediaSession.metadata = new MediaMetadata({ title: track.title, artist: track.artist || '', artwork: cached ? [{ src: cached }] : [] });
+        navigator.mediaSession.metadata = new MediaMetadata({
+            title:   track.title,
+            artist:  track.artist || '',
+            artwork: cached ? [{ src: cached }] : []
+        });
         navigator.mediaSession.playbackState = 'playing';
-        navigator.mediaSession.setActionHandler('play', togglePlay);
-        navigator.mediaSession.setActionHandler('pause', togglePlay);
+        navigator.mediaSession.setActionHandler('play',          togglePlay);
+        navigator.mediaSession.setActionHandler('pause',         togglePlay);
         navigator.mediaSession.setActionHandler('previoustrack', playPrev);
-        navigator.mediaSession.setActionHandler('nexttrack', playNext);
-        navigator.mediaSession.setActionHandler('seekto', (details) => { if (details.seekTime !== undefined && audioPlayer.duration) audioPlayer.currentTime = details.seekTime; });
+        navigator.mediaSession.setActionHandler('nexttrack',     playNext);
+        navigator.mediaSession.setActionHandler('seekto', (details) => {
+            if (details.seekTime !== undefined && audioPlayer.duration) {
+                audioPlayer.currentTime = details.seekTime;
+            }
+        });
     }
 }
 
+function updatePlayButtonUI() {
+    const icon = appState.isPlaying ? 'pause' : 'play_arrow';
+    [document.getElementById('ctrl-play'), document.getElementById('fp-play')].forEach(btn => {
+        if (btn) btn.querySelector('.material-symbols-rounded').textContent = icon;
+    });
+    updateMiniPlayButton();
+    if ('mediaSession' in navigator) {
+        navigator.mediaSession.playbackState = appState.isPlaying ? 'playing' : 'paused';
+    }
+}
+
+// ─────────────────────────────────────────────
+// 検索・ソート初期化
+// ─────────────────────────────────────────────
 function initSearchAndSort() {
     const mainSearch = document.getElementById('main-search-input');
-    if (mainSearch) mainSearch.addEventListener('input', (e) => { appState.searchQueryMain = e.target.value.toLowerCase(); updateMainQueue(); });
+    if (mainSearch) mainSearch.addEventListener('input', (e) => {
+        appState.searchQueryMain = e.target.value.toLowerCase();
+        updateMainQueue();
+    });
 
     const sortSelect = document.getElementById('main-sort-select');
     if (sortSelect) sortSelect.addEventListener('change', (e) => {
         appState.sortModeMain = e.target.value;
-        if (appState.isShuffled) { appState.isShuffled = false; [document.getElementById('ctrl-shuffle'), document.getElementById('fp-shuffle')].forEach(b => { if (b) b.classList.remove('active'); }); }
+        if (appState.isShuffled) {
+            appState.isShuffled = false;
+            [document.getElementById('ctrl-shuffle'), document.getElementById('fp-shuffle')].forEach(b => {
+                if (b) b.classList.remove('active');
+            });
+        }
         updateMainQueue();
     });
 
     const editSearch = document.getElementById('edit-search-input');
-    if (editSearch) editSearch.addEventListener('input', (e) => { appState.searchQueryEdit = e.target.value.toLowerCase(); renderVirtualEditGrid(); });
+    if (editSearch) editSearch.addEventListener('input', (e) => {
+        appState.searchQueryEdit = e.target.value.toLowerCase();
+        renderVirtualEditGrid();
+    });
 
     const editSortSelect = document.getElementById('edit-sort-select');
-    if (editSortSelect) editSortSelect.addEventListener('change', (e) => { appState.editSortMode = e.target.value; renderVirtualEditGrid(); });
+    if (editSortSelect) editSortSelect.addEventListener('change', (e) => {
+        appState.editSortMode = e.target.value;
+        renderVirtualEditGrid();
+    });
 }
 
+// ─────────────────────────────────────────────
+// 選択モード
+// ─────────────────────────────────────────────
 function initSelectMode() {
     const toggleBtn    = document.getElementById('btn-select-mode');
     const selectAllBtn = document.getElementById('btn-select-all');
@@ -3073,15 +3150,20 @@ function initSelectMode() {
     }
     if (selectAllBtn) {
         selectAllBtn.addEventListener('click', () => {
-            if (appState.selectedMainTracks.size === appState.currentQueue.length && appState.currentQueue.length > 0) appState.selectedMainTracks.clear();
-            else appState.currentQueue.forEach(t => appState.selectedMainTracks.add(t.id));
-            updateBulkActionBar(); renderVirtualTrackList();
+            if (appState.selectedMainTracks.size === appState.currentQueue.length && appState.currentQueue.length > 0) {
+                appState.selectedMainTracks.clear();
+            } else {
+                appState.currentQueue.forEach(t => appState.selectedMainTracks.add(t.id));
+            }
+            updateBulkActionBar();
+            renderVirtualTrackList();
         });
     }
 }
 
 function exitSelectMode() {
-    appState.isSelectMode = false; appState.selectedMainTracks.clear();
+    appState.isSelectMode = false;
+    appState.selectedMainTracks.clear();
     const toggleBtn    = document.getElementById('btn-select-mode');
     const selectAllBtn = document.getElementById('btn-select-all');
     if (toggleBtn)    toggleBtn.classList.remove('active');
@@ -3107,20 +3189,30 @@ function initEditSelectMode() {
     if (selectAllBtn) {
         selectAllBtn.addEventListener('click', () => {
             const displayTracks = getEditDisplayTracks();
-            if (appState.editSelectedTracks.size === displayTracks.length && displayTracks.length > 0) appState.editSelectedTracks.clear();
-            else displayTracks.forEach(t => appState.editSelectedTracks.add(t.id));
-            updateEditBulkBar(); renderVirtualEditGrid();
+            if (appState.editSelectedTracks.size === displayTracks.length && displayTracks.length > 0) {
+                appState.editSelectedTracks.clear();
+            } else {
+                displayTracks.forEach(t => appState.editSelectedTracks.add(t.id));
+            }
+            updateEditBulkBar();
+            renderVirtualEditGrid();
         });
     }
-    if (bulkEditBtn) bulkEditBtn.addEventListener('click', () => { if (appState.editSelectedTracks.size === 0) return; openEditModal(Array.from(appState.editSelectedTracks)); });
+    if (bulkEditBtn) bulkEditBtn.addEventListener('click', () => {
+        if (appState.editSelectedTracks.size === 0) return;
+        openEditModal(Array.from(appState.editSelectedTracks));
+    });
     if (bulkDelBtn) bulkDelBtn.addEventListener('click', () => {
         if (appState.editSelectedTracks.size === 0) return;
-        deleteTracksCompletely(Array.from(appState.editSelectedTracks)).then(() => { appState.editSelectedTracks.clear(); updateEditBulkBar(); });
+        deleteTracksCompletely(Array.from(appState.editSelectedTracks)).then(() => {
+            appState.editSelectedTracks.clear(); updateEditBulkBar();
+        });
     });
 }
 
 function exitEditSelectMode() {
-    appState.editIsSelectMode = false; appState.editSelectedTracks.clear();
+    appState.editIsSelectMode = false;
+    appState.editSelectedTracks.clear();
     const toggleBtn    = document.getElementById('edit-select-mode-btn');
     const selectAllBtn = document.getElementById('edit-select-all-btn');
     if (toggleBtn)    toggleBtn.classList.remove('active');
@@ -3138,10 +3230,14 @@ function updateEditBulkBar() {
     if (countSpan) countSpan.textContent = `${count}曲を選択中`;
 }
 
+// ─────────────────────────────────────────────
+// キュー更新
+// ─────────────────────────────────────────────
 function updateMainQueue() {
     let baseList = [];
-    if (!appState.currentPlaylistId) baseList = [...appState.tracks];
-    else {
+    if (!appState.currentPlaylistId) {
+        baseList = [...appState.tracks];
+    } else {
         const pl = appState.playlists.find(p => p.id === appState.currentPlaylistId);
         if (pl) baseList = pl.trackIds.map(id => appState.tracks.find(t => t.id === id)).filter(Boolean);
     }
@@ -3149,7 +3245,9 @@ function updateMainQueue() {
     if (appState.searchQueryMain) {
         baseList = baseList.filter(t => {
             const q = appState.searchQueryMain;
-            return t.title.toLowerCase().includes(q) || (t.artist || '').toLowerCase().includes(q) || (t.tags || []).some(tag => (typeof tag === 'string' ? tag : tag.text).toLowerCase().includes(q));
+            return t.title.toLowerCase().includes(q) ||
+                (t.artist || '').toLowerCase().includes(q) ||
+                (t.tags || []).some(tag => (typeof tag === 'string' ? tag : tag.text).toLowerCase().includes(q));
         });
     }
 
@@ -3182,12 +3280,22 @@ function updateMainQueue() {
     if (appState.isQueueOpen) renderQueuePanel();
 }
 
+// ─────────────────────────────────────────────
+// 仮想スクロール
+// ─────────────────────────────────────────────
 function initVirtualScrollListeners() {
     const trackOuter = document.getElementById('track-list-outer');
-    if (trackOuter) trackOuter.addEventListener('scroll', () => renderVirtualTrackList(), { passive: true });
+    if (trackOuter) {
+        trackOuter.addEventListener('scroll', () => renderVirtualTrackList(), { passive: true });
+    }
     const editOuter = document.getElementById('edit-list-outer');
-    if (editOuter) editOuter.addEventListener('scroll', () => renderVirtualEditGrid(), { passive: true });
-    const ro = new ResizeObserver(() => { renderVirtualTrackList(); renderVirtualEditGrid(); });
+    if (editOuter) {
+        editOuter.addEventListener('scroll', () => renderVirtualEditGrid(), { passive: true });
+    }
+    const ro = new ResizeObserver(() => {
+        renderVirtualTrackList();
+        renderVirtualEditGrid();
+    });
     if (trackOuter) ro.observe(trackOuter);
     if (editOuter)  ro.observe(editOuter);
 }
@@ -3213,7 +3321,9 @@ function renderVirtualTrackList() {
     rendered.style.top = (startIdx * TRACK_ITEM_H) + 'px';
     rendered.innerHTML = '';
 
-    for (let i = startIdx; i <= endIdx; i++) rendered.appendChild(buildTrackListItem(items[i], i));
+    for (let i = startIdx; i <= endIdx; i++) {
+        rendered.appendChild(buildTrackListItem(items[i], i));
+    }
 }
 
 function buildTrackListItem(track, index) {
@@ -3233,9 +3343,11 @@ function buildTrackListItem(track, index) {
     thumb.className = 'track-thumb';
     const cachedThumb = thumbCache.get(track.id);
     if (cachedThumb) {
-        thumb.style.backgroundImage = `url(${cachedThumb})`; thumb.style.backgroundSize  = 'cover';
+        thumb.style.backgroundImage = `url(${cachedThumb})`;
+        thumb.style.backgroundSize  = 'cover';
     } else {
-        thumb.innerHTML = '<span class="material-symbols-rounded">music_note</span>'; loadThumbForElement(track.id, thumb);
+        thumb.innerHTML = '<span class="material-symbols-rounded">music_note</span>';
+        loadThumbForElement(track.id, thumb);
     }
     const playingInd = document.createElement('div');
     playingInd.className = 'playing-indicator';
@@ -3252,7 +3364,8 @@ function buildTrackListItem(track, index) {
     subEl.className   = 'track-list-sub';
     subEl.textContent = track.artist || '-';
 
-    info.appendChild(titleEl); info.appendChild(subEl);
+    info.appendChild(titleEl);
+    info.appendChild(subEl);
 
     if (track.tags && track.tags.length > 0) {
         const sortedTags = sortTagsByOrder(track.tags);
@@ -3261,7 +3374,9 @@ function buildTrackListItem(track, index) {
         sortedTags.forEach(t => {
             const tObj  = typeof t === 'string' ? { text: t, color: getTagColorHex(t) } : t;
             const dot   = document.createElement('span');
-            dot.className = 'track-tag-dot'; dot.style.background = tObj.color; dot.title = tObj.text;
+            dot.className = 'track-tag-dot';
+            dot.style.background = tObj.color;
+            dot.title = tObj.text;
             dotRow.appendChild(dot);
         });
         info.appendChild(dotRow);
@@ -3283,7 +3398,8 @@ function buildTrackListItem(track, index) {
         downBtn.innerHTML = '<span class="material-symbols-rounded">arrow_downward</span>';
         downBtn.addEventListener('click', (e) => { e.stopPropagation(); moveTrackInQueue(index, index + 1); });
 
-        actions.appendChild(upBtn); actions.appendChild(downBtn);
+        actions.appendChild(upBtn);
+        actions.appendChild(downBtn);
     }
 
     const addBtn = document.createElement('button');
@@ -3296,7 +3412,8 @@ function buildTrackListItem(track, index) {
     editBtn.innerHTML = '<span class="material-symbols-rounded">edit</span>';
     editBtn.addEventListener('click', (e) => { e.stopPropagation(); openEditModal([track.id]); });
 
-    actions.appendChild(addBtn); actions.appendChild(editBtn);
+    actions.appendChild(addBtn);
+    actions.appendChild(editBtn);
 
     if (appState.currentPlaylistId) {
         const removeBtn = document.createElement('button');
@@ -3315,13 +3432,21 @@ function buildTrackListItem(track, index) {
     li.addEventListener('click', (e) => {
         if (e.target.closest('.track-actions')) return;
         if (appState.isSelectMode) {
-            if (appState.selectedMainTracks.has(track.id)) { appState.selectedMainTracks.delete(track.id); li.classList.remove('selected'); }
-            else { appState.selectedMainTracks.add(track.id); li.classList.add('selected'); }
+            if (appState.selectedMainTracks.has(track.id)) {
+                appState.selectedMainTracks.delete(track.id); li.classList.remove('selected');
+            } else {
+                appState.selectedMainTracks.add(track.id); li.classList.add('selected');
+            }
             updateBulkActionBar();
-        } else { playTrack(index); }
+        } else {
+            playTrack(index);
+        }
     });
 
-    li.appendChild(selectIndicator); li.appendChild(thumb); li.appendChild(info); li.appendChild(actions);
+    li.appendChild(selectIndicator);
+    li.appendChild(thumb);
+    li.appendChild(info);
+    li.appendChild(actions);
     return li;
 }
 
@@ -3330,11 +3455,16 @@ function moveTrackInQueue(fromIdx, toIdx) {
     if (appState.sortModeMain !== 'manual') return;
     const item = appState.currentQueue.splice(fromIdx, 1)[0];
     appState.currentQueue.splice(toIdx, 0, item);
-    if (appState.currentTrackIndex === fromIdx) { appState.currentTrackIndex = toIdx; }
-    else if (fromIdx < toIdx && appState.currentTrackIndex > fromIdx && appState.currentTrackIndex <= toIdx) { appState.currentTrackIndex--; }
-    else if (fromIdx > toIdx && appState.currentTrackIndex >= toIdx && appState.currentTrackIndex < fromIdx) { appState.currentTrackIndex++; }
+    if (appState.currentTrackIndex === fromIdx) {
+        appState.currentTrackIndex = toIdx;
+    } else if (fromIdx < toIdx && appState.currentTrackIndex > fromIdx && appState.currentTrackIndex <= toIdx) {
+        appState.currentTrackIndex--;
+    } else if (fromIdx > toIdx && appState.currentTrackIndex >= toIdx && appState.currentTrackIndex < fromIdx) {
+        appState.currentTrackIndex++;
+    }
     if (appState.isShuffled) buildShuffleOrder();
-    saveManualOrder(); renderVirtualTrackList();
+    saveManualOrder();
+    renderVirtualTrackList();
 }
 
 function updateBulkActionBar() {
@@ -3355,10 +3485,15 @@ function initBulkActions() {
 
     if (bulkAddBtn)    bulkAddBtn.addEventListener('click', () => openAddToPlaylistModal(Array.from(appState.selectedMainTracks)));
     if (bulkEditBtn)   bulkEditBtn.addEventListener('click', () => openEditModal(Array.from(appState.selectedMainTracks)));
-    if (bulkRemoveBtn) bulkRemoveBtn.addEventListener('click', () => { if (appState.currentPlaylistId) removeTracksFromPlaylist(appState.currentPlaylistId, Array.from(appState.selectedMainTracks)); });
+    if (bulkRemoveBtn) bulkRemoveBtn.addEventListener('click', () => {
+        if (appState.currentPlaylistId) removeTracksFromPlaylist(appState.currentPlaylistId, Array.from(appState.selectedMainTracks));
+    });
     if (bulkDeleteBtn) bulkDeleteBtn.addEventListener('click', () => deleteTracksCompletely(Array.from(appState.selectedMainTracks)));
 }
 
+// ─────────────────────────────────────────────
+// 編集モーダル
+// ─────────────────────────────────────────────
 let editingTags         = [];
 let currentEditTrackIds = [];
 
@@ -3390,25 +3525,35 @@ function initEditPage() {
         });
     }
 
-    if (thumbnailInput) thumbnailInput.addEventListener('change', (e) => { if (e.target.files[0]) loadThumbnailFromFile(e.target.files[0]); });
+    if (thumbnailInput) thumbnailInput.addEventListener('change', (e) => {
+        if (e.target.files[0]) loadThumbnailFromFile(e.target.files[0]);
+    });
 
     if (thumbnailRemoveBtn) thumbnailRemoveBtn.addEventListener('click', () => {
         const preview = document.getElementById('edit-thumbnail-preview');
-        if (preview) { preview.style.backgroundImage = 'none'; preview.innerHTML = '<span class="material-symbols-rounded">image</span>'; preview.dataset.url = ''; }
+        if (preview) {
+            preview.style.backgroundImage = 'none';
+            preview.innerHTML = '<span class="material-symbols-rounded">image</span>';
+            preview.dataset.url = '';
+        }
     });
 
     if (tagInput) {
         tagInput.addEventListener('keypress', (e) => {
             if (e.key === 'Enter') {
-                e.preventDefault(); const tagText = tagInput.value.trim();
+                e.preventDefault();
+                const tagText = tagInput.value.trim();
                 if (tagText && !editingTags.find(t => t.text === tagText)) {
                     const existing = appState.allKnownTags.get(tagText);
                     const color    = existing ? existing.color : getTagColorHex(tagText);
-                    editingTags.push({ text: tagText, color }); renderModalTags(); tagInput.value = '';
+                    editingTags.push({ text: tagText, color });
+                    renderModalTags();
+                    tagInput.value = '';
                 }
             }
         });
     }
+
     if (saveBtn) saveBtn.addEventListener('click', saveMetadata);
 }
 
@@ -3416,7 +3561,11 @@ function loadThumbnailFromFile(file) {
     const reader = new FileReader();
     reader.onload = (e) => {
         const preview = document.getElementById('edit-thumbnail-preview');
-        if (preview) { preview.style.backgroundImage = `url(${e.target.result})`; preview.innerHTML   = ''; preview.dataset.url = e.target.result; }
+        if (preview) {
+            preview.style.backgroundImage = `url(${e.target.result})`;
+            preview.innerHTML   = '';
+            preview.dataset.url = e.target.result;
+        }
     };
     reader.readAsDataURL(file);
 }
@@ -3453,12 +3602,22 @@ async function openEditModal(trackIds) {
 
         if (preview) {
             const dataUrl = thumbCache.get(track.id) || await getThumbFromDB(track.id);
-            if (dataUrl) { preview.style.backgroundImage = `url(${dataUrl})`; preview.innerHTML   = ''; preview.dataset.url = dataUrl; }
-            else { preview.style.backgroundImage = 'none'; preview.innerHTML   = '<span class="material-symbols-rounded">image</span>'; preview.dataset.url = ''; }
+            if (dataUrl) {
+                preview.style.backgroundImage = `url(${dataUrl})`;
+                preview.innerHTML   = '';
+                preview.dataset.url = dataUrl;
+            } else {
+                preview.style.backgroundImage = 'none';
+                preview.innerHTML   = '<span class="material-symbols-rounded">image</span>';
+                preview.dataset.url = '';
+            }
         }
     }
 
-    populateArtistChips(); renderModalTags(); modal.style.display = 'flex'; document.body.style.overflow = 'hidden';
+    populateArtistChips();
+    renderModalTags();
+    modal.style.display = 'flex';
+    document.body.style.overflow = 'hidden';
 }
 
 function populateArtistChips() {
@@ -3467,8 +3626,14 @@ function populateArtistChips() {
     artistsRow.innerHTML = '';
     const artists = [...new Set(appState.tracks.map(t => t.artist).filter(Boolean))];
     artists.slice(0, 20).forEach(artist => {
-        const chip = document.createElement('button'); chip.className   = 'existing-chip'; chip.textContent = artist; chip.type        = 'button';
-        chip.addEventListener('click', () => { const artistInput = document.getElementById('edit-artist'); if (artistInput) artistInput.value = artist; });
+        const chip = document.createElement('button');
+        chip.className   = 'existing-chip';
+        chip.textContent = artist;
+        chip.type        = 'button';
+        chip.addEventListener('click', () => {
+            const artistInput = document.getElementById('edit-artist');
+            if (artistInput) artistInput.value = artist;
+        });
         artistsRow.appendChild(chip);
     });
 }
@@ -3482,8 +3647,16 @@ function refreshExistingTagsChips() {
         if (!tagObj) return;
         if (editingTags.find(t => t.text === text)) return;
         const chip = document.createElement('button');
-        chip.className   = 'existing-chip'; chip.textContent = text; chip.style.borderColor = tagObj.color; chip.type        = 'button';
-        chip.addEventListener('click', () => { if (!editingTags.find(t => t.text === text)) { editingTags.push({ text, color: tagObj.color }); renderModalTags(); } });
+        chip.className   = 'existing-chip';
+        chip.textContent = text;
+        chip.style.borderColor = tagObj.color;
+        chip.type        = 'button';
+        chip.addEventListener('click', () => {
+            if (!editingTags.find(t => t.text === text)) {
+                editingTags.push({ text, color: tagObj.color });
+                renderModalTags();
+            }
+        });
         tagsRow.appendChild(chip);
     });
 }
@@ -3491,7 +3664,9 @@ function refreshExistingTagsChips() {
 function closeEditModal() {
     const modal = document.getElementById('edit-modal');
     if (modal) modal.style.display = 'none';
-    document.body.style.overflow = ''; currentEditTrackIds = []; editingTags = [];
+    document.body.style.overflow = '';
+    currentEditTrackIds = [];
+    editingTags         = [];
 }
 
 function renderModalTags() {
@@ -3499,27 +3674,54 @@ function renderModalTags() {
     if (!list) return;
     list.innerHTML = '';
     editingTags.forEach((tagObj, index) => {
-        const span = document.createElement('span'); span.className = 'tag-item'; span.style.border = `1px solid ${tagObj.color}`; span.style.backgroundColor = `${tagObj.color}33`;
-        span.innerHTML = `<span class="tag-text-content" style="cursor:pointer;">${tagObj.text}</span><span class="material-symbols-rounded remove-tag" data-index="${index}" style="font-size:14px;cursor:pointer;opacity:0.7;">close</span>`;
+        const span = document.createElement('span');
+        span.className = 'tag-item';
+        span.style.border          = `1px solid ${tagObj.color}`;
+        span.style.backgroundColor = `${tagObj.color}33`;
+        span.innerHTML = `
+            <span class="tag-text-content" style="cursor:pointer;">${tagObj.text}</span>
+            <span class="material-symbols-rounded remove-tag" data-index="${index}" style="font-size:14px;cursor:pointer;opacity:0.7;">close</span>
+        `;
         span.querySelector('.tag-text-content').addEventListener('click', () => openTagEditModal(index));
         list.appendChild(span);
     });
-    list.querySelectorAll('.remove-tag').forEach(btn => { btn.addEventListener('click', (e) => { editingTags.splice(parseInt(e.target.getAttribute('data-index')), 1); renderModalTags(); }); });
+    list.querySelectorAll('.remove-tag').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            editingTags.splice(parseInt(e.target.getAttribute('data-index')), 1);
+            renderModalTags();
+        });
+    });
     refreshExistingTagsChips();
 }
 
 function openTagEditModal(index) {
     const tagObj = editingTags[index];
     const modal  = document.createElement('div');
-    modal.className    = 'modal-overlay'; modal.style.zIndex = '600';
+    modal.className    = 'modal-overlay';
+    modal.style.zIndex = '600';
     modal.innerHTML    = `
         <div class="edit-modal-content" style="max-width:320px;">
-            <div class="edit-modal-header"><h2 class="edit-modal-title">タグを編集</h2><button class="icon-btn" id="tag-modal-cancel-x"><span class="material-symbols-rounded">close</span></button></div>
-            <div style="padding:16px 24px;display:flex;flex-direction:column;gap:14px;">
-                <div class="form-field"><label class="form-label">タグ名</label><input type="text" id="modal-tag-name" class="form-input" value="${tagObj.text}"></div>
-                <div class="form-field"><label class="form-label">色</label><input type="color" id="modal-tag-color" value="${tagObj.color}" style="width:100%;height:36px;border:1px solid var(--border);border-radius:8px;padding:2px 4px;cursor:pointer;"></div>
+            <div class="edit-modal-header">
+                <h2 class="edit-modal-title">タグを編集</h2>
+                <button class="icon-btn" id="tag-modal-cancel-x"><span class="material-symbols-rounded">close</span></button>
             </div>
-            <div class="edit-modal-footer"><span></span><div class="edit-modal-btns"><button class="action-btn" id="tag-modal-cancel">キャンセル</button><button class="action-btn primary" id="tag-modal-save">確定</button></div></div>
+            <div style="padding:16px 24px;display:flex;flex-direction:column;gap:14px;">
+                <div class="form-field">
+                    <label class="form-label">タグ名</label>
+                    <input type="text" id="modal-tag-name" class="form-input" value="${tagObj.text}">
+                </div>
+                <div class="form-field">
+                    <label class="form-label">色</label>
+                    <input type="color" id="modal-tag-color" value="${tagObj.color}" style="width:100%;height:36px;border:1px solid var(--border);border-radius:8px;padding:2px 4px;cursor:pointer;">
+                </div>
+            </div>
+            <div class="edit-modal-footer">
+                <span></span>
+                <div class="edit-modal-btns">
+                    <button class="action-btn" id="tag-modal-cancel">キャンセル</button>
+                    <button class="action-btn primary" id="tag-modal-save">確定</button>
+                </div>
+            </div>
         </div>
     `;
     document.body.appendChild(modal);
@@ -3527,7 +3729,8 @@ function openTagEditModal(index) {
     modal.querySelector('#tag-modal-cancel-x').addEventListener('click', () => modal.remove());
     modal.querySelector('#tag-modal-cancel').addEventListener('click',   () => modal.remove());
     modal.querySelector('#tag-modal-save').addEventListener('click', () => {
-        const newText  = modal.querySelector('#modal-tag-name').value.trim(); const newColor = modal.querySelector('#modal-tag-color').value;
+        const newText  = modal.querySelector('#modal-tag-name').value.trim();
+        const newColor = modal.querySelector('#modal-tag-color').value;
         if (newText) { editingTags[index] = { text: newText, color: newColor }; renderModalTags(); }
         modal.remove();
     });
@@ -3545,41 +3748,70 @@ async function saveMetadata() {
     currentEditTrackIds.forEach(id => {
         const track = appState.tracks.find(t => t.id === id);
         if (track) {
-            if (!isBulk) { track.title = document.getElementById('edit-title').value; track.artist = newArtist; track.date = newDate; track.tags = [...editingTags]; }
-            else {
-                if (newArtist) track.artist = newArtist; if (newDate) track.date = newDate;
+            if (!isBulk) {
+                track.title  = document.getElementById('edit-title').value;
+                track.artist = newArtist;
+                track.date   = newDate;
+                track.tags   = [...editingTags];
+            } else {
+                if (newArtist) track.artist = newArtist;
+                if (newDate)   track.date   = newDate;
                 let combinedTags = [...(track.tags || [])];
-                editingTags.forEach(newTag => { const exists = combinedTags.find(t => (typeof t === 'string' ? t : t.text) === newTag.text); if (!exists) combinedTags.push(newTag); });
+                editingTags.forEach(newTag => {
+                    const exists = combinedTags.find(t => (typeof t === 'string' ? t : t.text) === newTag.text);
+                    if (!exists) combinedTags.push(newTag);
+                });
                 track.tags = combinedTags;
             }
-            track.updatedAt = Date.now(); tracksToUpdate.push(track);
+            track.updatedAt = Date.now();
+            tracksToUpdate.push(track);
         }
     });
 
     for (const track of tracksToUpdate) {
         await saveTrackToDB(track);
         if (!isBulk && newThumbnail !== undefined) {
-            if (newThumbnail) { await saveThumbToDB(track.id, newThumbnail); thumbCache.set(track.id, newThumbnail); track.thumbDriveId = null; }
-            else { await deleteThumbFromDB(track.id); thumbCache.delete(track.id); track.thumbDriveId = null; }
+            if (newThumbnail) {
+                await saveThumbToDB(track.id, newThumbnail);
+                thumbCache.set(track.id, newThumbnail);
+                track.thumbDriveId = null;
+            } else {
+                await deleteThumbFromDB(track.id);
+                thumbCache.delete(track.id);
+                track.thumbDriveId = null;
+            }
             await saveTrackToDB(track);
         }
     }
 
     editingTags.forEach(tag => {
-        if (!appState.allKnownTags.has(tag.text)) { appState.allKnownTags.set(tag.text, tag); appState.tagOrder.push(tag.text); }
-        else { appState.allKnownTags.set(tag.text, tag); }
+        if (!appState.allKnownTags.has(tag.text)) {
+            appState.allKnownTags.set(tag.text, tag);
+            appState.tagOrder.push(tag.text);
+        } else {
+            appState.allKnownTags.set(tag.text, tag);
+        }
     });
     saveTagOrderToStorage();
 
     showToast(`${tracksToUpdate.length}曲 の情報を保存しました`, 'success');
-    await loadLibrary(); renderVirtualEditGrid(); closeEditModal(); autoSync();
+    await loadLibrary();
+    renderVirtualEditGrid();
+    closeEditModal();
+    autoSync();
 }
 
-function initPlaylistPlaybackControls() {}
+function initPlaylistPlaybackControls() {
+    // btn-play-all / btn-shuffle-all はHTML削除済み
+}
 
+// ─────────────────────────────────────────────
+// ユーティリティ
+// ─────────────────────────────────────────────
 function formatTime(seconds) {
     if (isNaN(seconds)) return '0:00';
-    const m = Math.floor(seconds / 60); const s = Math.floor(seconds % 60);
+    const m = Math.floor(seconds / 60);
+    const s = Math.floor(seconds % 60);
     return `${m}:${s.toString().padStart(2, '0')}`;
 }
 
