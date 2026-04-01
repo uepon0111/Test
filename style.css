@@ -1996,3 +1996,13 @@ kbd {
     .edit-grid-row { grid-template-columns: repeat(4, 1fr); padding: 0 14px; }
 }
 
+
+.sync-net-note {
+    margin-top: 4px;
+    font-size: 11px;
+    color: var(--text-tertiary);
+}
+
+.settings-item-desc strong {
+    color: var(--text-primary);
+}
