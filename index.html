@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Harmonia</title>
 
+    <!-- PWA -->
     <link rel="manifest" href="manifest.json">
     <meta name="theme-color" content="#1a6ef5">
     <meta name="mobile-web-app-capable" content="yes">
@@ -24,6 +25,7 @@
 </head>
 <body>
 
+<!-- ── サイドナビ（PC） ── -->
 <nav class="sidenav" id="sidenav">
     <div class="sidenav-logo">
         <span class="material-symbols-rounded">music_note</span>
@@ -58,11 +60,14 @@
     </div>
 </nav>
 
+<!-- ── メインコンテンツ ── -->
 <main class="main-wrapper" id="main-wrapper">
 
+    <!-- ▌ プレイヤーページ ▌ -->
     <section id="player" class="page-section active">
         <div class="player-page-layout">
 
+            <!-- 左：アルバムアート＋プレイヤー -->
             <div class="player-left-panel" id="player-left-panel">
                 <div class="artwork-container" id="artwork-container">
                     <div class="artwork-bg" id="artwork-bg"></div>
@@ -76,6 +81,7 @@
                     <div class="np-artist" id="np-artist">-</div>
                 </div>
 
+                <!-- スマホ縦：プレイヤーウィジェット展開ボタン -->
                 <button id="mobile-expand-btn" class="icon-btn mobile-only-btn" title="プレイヤーを展開">
                     <span class="material-symbols-rounded">expand_less</span>
                 </button>
@@ -119,6 +125,7 @@
                 </div>
             </div>
 
+            <!-- 右：プレイリスト＋曲一覧 -->
             <div class="player-right-panel">
                 <div class="right-panel-header">
                     <div class="right-search-bar">
@@ -138,6 +145,7 @@
                     </div>
                 </div>
 
+                <!-- プレイリストタブ -->
                 <div class="playlist-tabs-row">
                     <div class="playlist-tabs" id="playlist-tabs">
                         <button id="library-all-btn" class="playlist-tab active" data-target="all">
@@ -147,6 +155,7 @@
                     </div>
                 </div>
 
+                <!-- 曲一覧ヘッダー -->
                 <div class="tracklist-header">
                     <div class="tracklist-header-left">
                         <h2 id="current-playlist-name" class="tracklist-title">すべての曲</h2>
@@ -174,6 +183,7 @@
                     </div>
                 </div>
 
+                <!-- 一括操作バー -->
                 <div id="bulk-actions-bar" class="bulk-actions-bar">
                     <span id="bulk-count" class="bulk-count">0曲を選択中</span>
                     <button id="bulk-add-playlist-btn" class="action-btn sm">
@@ -190,12 +200,14 @@
                     </button>
                 </div>
 
+                <!-- 曲リスト（仮想スクロール） -->
                 <div class="vscroll-outer" id="track-list-outer">
                     <div class="vscroll-inner" id="track-list-inner">
                         <div id="track-list-rendered" class="vscroll-rendered"></div>
                     </div>
                 </div>
 
+                <!-- ドロップゾーン（空の時） -->
                 <div id="drop-zone" class="drop-zone-main">
                     <span class="material-symbols-rounded">upload_file</span>
                     <p>ここにファイルをドロップ</p>
@@ -209,12 +221,14 @@
         </div>
     </section>
 
+    <!-- ▌ ログ・統計ページ ▌ -->
     <section id="log" class="page-section">
         <div class="log-page">
             <div class="log-header">
                 <h1 class="page-title">ログ・統計</h1>
             </div>
 
+            <!-- ── 周年バナー（常時表示、該当日のみ） ── -->
             <div class="anniversary-section" id="anniversary-section" style="display:none;">
                 <div class="anniversary-section-header">
                     <span class="material-symbols-rounded">celebration</span>
@@ -223,6 +237,7 @@
                 <div class="anniversary-list" id="anniversary-list"></div>
             </div>
 
+            <!-- ── ビュー切り替えタブ（グラフ / カレンダー） ── -->
             <div class="log-view-tabs">
                 <button class="log-view-tab active" id="log-tab-chart" data-view="chart">
                     <span class="material-symbols-rounded">bar_chart</span>
@@ -234,7 +249,9 @@
                 </button>
             </div>
 
+            <!-- ── グラフビュー ── -->
             <div id="log-chart-view">
+                <!-- サマリーカード -->
                 <div class="stat-cards">
                     <div class="stat-card">
                         <span class="material-symbols-rounded">schedule</span>
@@ -266,6 +283,7 @@
                     </div>
                 </div>
 
+                <!-- フィルター -->
                 <div class="log-filters">
                     <div class="filter-group">
                         <span class="filter-label">カテゴリ</span>
@@ -299,6 +317,7 @@
                     </div>
                 </div>
 
+                <!-- グラフエリア -->
                 <div class="log-charts-area">
                     <div class="chart-card chart-card-main">
                         <div class="chart-title-row">
@@ -318,12 +337,16 @@
                     </div>
                 </div>
 
+                <!-- ランキング -->
                 <div class="log-ranking" id="log-ranking">
                     <h3 class="ranking-title" id="ranking-title">再生時間ランキング</h3>
                     <div id="ranking-first-card" class="ranking-first-card" style="display:none;"></div>
                     <ol class="ranking-list" id="ranking-list" start="2"></ol>
                 </div>
-            </div><div id="log-calendar-view" style="display:none;">
+            </div><!-- /#log-chart-view -->
+
+            <!-- ── カレンダービュー ── -->
+            <div id="log-calendar-view" style="display:none;">
                 <div class="calendar-nav">
                     <button class="icon-btn" id="cal-prev-btn" title="前の月">
                         <span class="material-symbols-rounded">chevron_left</span>
@@ -344,6 +367,7 @@
                 </div>
                 <div class="calendar-grid" id="calendar-grid"></div>
 
+                <!-- 日付クリック時のトラックリスト -->
                 <div class="calendar-day-panel" id="calendar-day-panel" style="display:none;">
                     <div class="cal-day-header">
                         <h3 class="cal-day-title" id="cal-day-title"></h3>
@@ -353,11 +377,15 @@
                     </div>
                     <ul class="cal-track-list" id="cal-track-list"></ul>
                 </div>
-            </div></div>
+            </div><!-- /#log-calendar-view -->
+
+        </div>
     </section>
 
+    <!-- ▌ 編集ページ ▌ -->
     <section id="edit" class="page-section">
         <div class="edit-page">
+            <!-- ヘッダー（曲一覧タブ時のみ検索・ソート表示） -->
             <div class="edit-page-header" id="edit-tracks-header">
                 <h1 class="page-title">情報編集</h1>
                 <div class="edit-search-bar">
@@ -387,6 +415,7 @@
                 </div>
             </div>
 
+            <!-- タグ管理タブ時のヘッダー -->
             <div class="edit-page-header edit-tag-header" id="edit-tags-header" style="display:none;">
                 <h1 class="page-title">情報編集</h1>
                 <button id="add-global-tag-btn" class="action-btn primary sm">
@@ -395,6 +424,7 @@
                 </button>
             </div>
 
+            <!-- サブタブ（曲一覧 / タグ管理） -->
             <div class="edit-sub-tabs">
                 <button class="edit-sub-tab active" id="edit-tab-tracks" data-tab="tracks">
                     <span class="material-symbols-rounded">library_music</span>
@@ -406,7 +436,9 @@
                 </button>
             </div>
 
+            <!-- ── 曲一覧ビュー ── -->
             <div id="edit-tracks-view">
+                <!-- 一括操作バー -->
                 <div id="edit-bulk-actions-bar" class="bulk-actions-bar">
                     <span id="edit-bulk-count" class="bulk-count">0曲を選択中</span>
                     <button id="edit-bulk-edit-btn" class="action-btn sm">
@@ -417,6 +449,7 @@
                     </button>
                 </div>
 
+                <!-- グリッド（仮想スクロール） -->
                 <div class="edit-vscroll-outer" id="edit-list-outer">
                     <div class="vscroll-inner" id="edit-list-inner">
                         <div id="edit-library-list" class="vscroll-rendered"></div>
@@ -427,29 +460,37 @@
                     <span class="material-symbols-rounded">library_music</span>
                     <p>ライブラリに曲がありません</p>
                 </div>
-            </div><div id="tag-management-view" style="display:none;">
+            </div><!-- /#edit-tracks-view -->
+
+            <!-- ── タグ管理ビュー ── -->
+            <div id="tag-management-view" style="display:none;">
                 <div class="tag-mgmt-desc-row">
                     <p class="tag-mgmt-desc">↑↓ボタンで表示優先順位を変更できます。優先順位は楽曲一覧のタグ表示順に反映され、同期されます。</p>
                 </div>
                 <ul class="tag-mgmt-list" id="tag-mgmt-list">
-                    </ul>
+                    <!-- JS で動的生成 -->
+                </ul>
                 <div class="tag-mgmt-empty" id="tag-mgmt-empty" style="display:none;">
                     <span class="material-symbols-rounded">label_off</span>
                     <p>タグがまだありません</p>
                 </div>
-            </div></div>
+            </div><!-- /#tag-management-view -->
+
+        </div>
     </section>
 
+    <!-- ▌ 設定ページ ▌ -->
     <section id="settings" class="page-section">
         <div class="settings-page">
             <h1 class="page-title">設定</h1>
 
+            <!-- アカウント -->
             <div class="settings-group">
                 <h2 class="settings-group-title">アカウント</h2>
                 <div class="settings-item settings-auth-item">
                     <div class="settings-item-info">
                         <div class="settings-item-label">Googleアカウント</div>
-                        <div class="settings-item-desc">ログインすると再生ログ・ライブラリをGoogle Driveで別端末と同期できます</div>
+                        <div class="settings-item-desc">ログインすると再生ログ・ライブラリをGoogle Driveで別端末と同期できます。ログアウトするまでこの端末では同じアカウントに連携します</div>
                     </div>
                     <div class="settings-auth-controls">
                         <button id="settings-btn-login" class="auth-btn">
@@ -468,6 +509,7 @@
                 </div>
             </div>
 
+            <!-- Google Drive 同期 -->
             <div class="settings-group">
                 <h2 class="settings-group-title">Google Drive 同期</h2>
 
@@ -482,13 +524,12 @@
                     </label>
                 </div>
 
+                <!-- ▼ 自動同期トグル（新規） -->
                 <div class="settings-item">
                     <div class="settings-item-info">
                         <div class="settings-item-label">自動同期</div>
-                        <div class="settings-item-desc">
-                            OFFにすると操作を蓄積し、「今すぐ同期」ボタンで一括同期できます。<br>
-                            <span style="color: var(--warning); display: inline-block; margin-top: 4px;">※データ通信量が多くなるため、Wi-Fi環境での手動同期を推奨します。</span>
-                        </div>
+                        <div class="settings-item-desc">OFFにすると操作を蓄積し、「今すぐ同期」ボタンで一括同期できます。自動同期は既定でOFF、同期はWi-Fi環境を推奨します</div>
+                        <div class="settings-item-desc sync-net-note">モバイル回線では手動同期をおすすめします。</div>
                     </div>
                     <label class="toggle-switch">
                         <input type="checkbox" id="setting-auto-sync">
@@ -496,6 +537,7 @@
                     </label>
                 </div>
 
+                <!-- 同期進捗 -->
                 <div class="settings-item sync-progress-item" id="sync-progress-item" style="display:none;">
                     <div class="settings-item-info">
                         <div class="settings-item-label" id="sync-progress-label">同期中...</div>
@@ -509,6 +551,7 @@
                     </div>
                 </div>
 
+                <!-- 同期失敗・リトライ -->
                 <div class="settings-item" id="sync-retry-item" style="display:none;">
                     <div class="settings-item-info">
                         <div class="settings-item-label" style="color:var(--danger);">同期に失敗しました</div>
@@ -520,6 +563,7 @@
                     </button>
                 </div>
 
+                <!-- 手動同期（ログイン中・非同期中に表示） -->
                 <div class="settings-item" id="sync-manual-item" style="display:none;">
                     <div class="settings-item-info">
                         <div class="settings-item-label">手動同期</div>
@@ -528,11 +572,13 @@
                     <button id="sync-now-btn" class="action-btn">
                         <span class="material-symbols-rounded">sync</span>
                         今すぐ同期
+                        <!-- 未同期件数バッジ（自動同期OFF時） -->
                         <span class="pending-sync-badge" id="pending-sync-badge" style="display:none;">0</span>
                     </button>
                 </div>
             </div>
 
+            <!-- キーボードショートカット -->
             <div class="settings-group">
                 <h2 class="settings-group-title">キーボードショートカット</h2>
                 <div class="kbd-grid">
@@ -546,6 +592,7 @@
                 </div>
             </div>
 
+            <!-- データ管理 -->
             <div class="settings-group">
                 <h2 class="settings-group-title">データ管理</h2>
                 <div class="settings-item">
@@ -564,6 +611,7 @@
 
 </main>
 
+<!-- ── 再生キューパネル ── -->
 <div class="queue-panel" id="queue-panel">
     <div class="queue-header">
         <h3>再生キュー</h3>
@@ -575,6 +623,7 @@
 </div>
 <div class="queue-overlay" id="queue-overlay"></div>
 
+<!-- ── 編集モーダル ── -->
 <div class="modal-overlay" id="edit-modal" style="display:none;">
     <div class="edit-modal-content">
         <div class="edit-modal-header">
@@ -585,6 +634,7 @@
         </div>
 
         <div class="edit-modal-body">
+            <!-- サムネイル -->
             <div class="edit-thumbnail-area">
                 <div class="edit-thumbnail-preview" id="edit-thumbnail-preview">
                     <span class="material-symbols-rounded">image</span>
@@ -602,6 +652,7 @@
                 </div>
             </div>
 
+            <!-- フォーム -->
             <div class="edit-form-area">
                 <div class="form-field">
                     <label class="form-label">タイトル</label>
@@ -645,6 +696,7 @@
     </div>
 </div>
 
+<!-- ── スマホ：ボトムナビ ── -->
 <nav class="bottom-nav" id="bottom-nav">
     <button class="bottom-nav-btn active" data-target="player">
         <span class="material-symbols-rounded">play_circle</span>
@@ -664,6 +716,7 @@
     </button>
 </nav>
 
+<!-- ── スマホ：ミニプレイヤー ── -->
 <div class="mini-player" id="mini-player">
     <div class="mini-player-inner">
         <div class="mini-thumb" id="mini-thumb">
@@ -690,6 +743,7 @@
     </div>
 </div>
 
+<!-- ── スマホ：フルスクリーンプレイヤー ── -->
 <div class="fullscreen-player" id="fullscreen-player">
     <div class="fp-bg" id="fp-bg"></div>
     <div class="fp-inner">
@@ -749,10 +803,12 @@
     </div>
 </div>
 
+<!-- ── トースト通知 ── -->
 <div class="toast-container" id="toast-container"></div>
 
 <script src="app.js"></script>
 
+<!-- ── Service Worker 登録 ── -->
 <script>
 if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
