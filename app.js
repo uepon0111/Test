@@ -47,7 +47,6 @@ const LAST_SYNC_KEY     = 'harmonia_last_sync';
 const TAG_ORDER_KEY     = 'harmonia_tag_order';
 const PENDING_OPS_KEY   = 'harmonia_pending_ops';
 const AUTO_SYNC_KEY     = 'harmonia_auto_sync';
-const AUTH_PROFILE_KEY  = 'harmonia_auth_profile';
 
 const appState = {
     tracks:             [],
@@ -202,7 +201,7 @@ function syncTagOrder() {
 // ─────────────────────────────────────────────
 function loadAutoSyncSetting() {
     const saved = localStorage.getItem(AUTO_SYNC_KEY);
-    appState.isAutoSync = (saved === null) ? false : saved === 'true';
+    appState.isAutoSync = (saved === null) ? true : saved === 'true';
 }
 
 function loadPendingOpsCount() {
@@ -1395,8 +1394,11 @@ function showCalendarDayPanel(year, month, day, tracks) {
 // Google ログイン & Drive連携
 // ─────────────────────────────────────────────
 function initAuthUI() {
-    const ensureTokenClient = () => {
-        if (!GOOGLE_CLIENT_ID || typeof google === 'undefined' || !google.accounts?.oauth2) return null;
+    const doLogin = () => {
+        if (!GOOGLE_CLIENT_ID) { showToast('GOOGLE_CLIENT_ID を設定してください', 'error'); return; }
+        if (typeof google === 'undefined' || !google.accounts) {
+            showToast('Google認証システムを読み込み中です。数秒後に再試行してください', 'warning'); return;
+        }
         if (!tokenClient) {
             tokenClient = google.accounts.oauth2.initTokenClient({
                 client_id: GOOGLE_CLIENT_ID,
@@ -1410,28 +1412,14 @@ function initAuthUI() {
                 },
             });
         }
-        return tokenClient;
+        tokenClient.requestAccessToken();
     };
 
-    const doLogin = () => {
-        if (!GOOGLE_CLIENT_ID) { showToast('GOOGLE_CLIENT_ID を設定してください', 'error'); return; }
-        if (typeof google === 'undefined' || !google.accounts?.oauth2) {
-            showToast('Google認証システムを読み込み中です。数秒後に再試行してください', 'warning'); return;
-        }
-        const client = ensureTokenClient();
-        if (!client) return;
-        client.requestAccessToken();
-    };
-
-    const doLogout = async () => {
-        if (gapiAccessToken && typeof google !== 'undefined' && google.accounts?.oauth2) {
-            try { google.accounts.oauth2.revoke(gapiAccessToken, () => {}); } catch {}
-        }
+    const doLogout = () => {
+        if (gapiAccessToken && typeof google !== 'undefined') google.accounts.oauth2.revoke(gapiAccessToken, () => {});
         gapiAccessToken = null;
         appState.isLoggedIn = false;
         appState.user       = null;
-        localStorage.removeItem(HARMONIA_USER_KEY);
-        clearAuthProfile();
         updateAuthUIDisplay();
         showToast('ログアウトしました');
     };
@@ -1440,21 +1428,6 @@ function initAuthUI() {
     const settingsBtnLogout = document.getElementById('settings-btn-logout');
     if (settingsBtnLogin)  settingsBtnLogin.addEventListener('click', doLogin);
     if (settingsBtnLogout) settingsBtnLogout.addEventListener('click', doLogout);
-
-    // ブラウザ再起動後の復帰を試行（Google側のセッションが残っている場合のみ成功）
-    const savedProfile = loadSavedAuthProfile();
-    if (savedProfile) {
-        const tryRestore = () => {
-            const client = ensureTokenClient();
-            if (!client || appState.isLoggedIn) return;
-            try { client.requestAccessToken({ prompt: '' }); } catch {}
-        };
-        if (typeof google === 'undefined' || !google.accounts?.oauth2) {
-            window.addEventListener('load', () => setTimeout(tryRestore, 600), { once: true });
-        } else {
-            setTimeout(tryRestore, 600);
-        }
-    }
 }
 
 function fetchUserInfo(token) {
@@ -1466,17 +1439,13 @@ function fetchUserInfo(token) {
         const prevUserId = localStorage.getItem(HARMONIA_USER_KEY);
         if (prevUserId && prevUserId !== String(data.sub)) {
             const merge = confirm(
-                `前回と異なるGoogleアカウント（${data.name}）でログインしました。
-
-` +
-                `[OK] ローカルデータを保持したままこのアカウントの同期データとマージする
-` +
+                `前回と異なるGoogleアカウント（${data.name}）でログインしました。\n\n` +
+                `[OK] ローカルデータを保持したままこのアカウントの同期データとマージする\n` +
                 `[キャンセル] ローカルデータをリセットしてこのアカウントで開始する`
             );
             if (!merge) await clearLocalDataForAccountSwitch();
         }
         localStorage.setItem(HARMONIA_USER_KEY, String(data.sub));
-        saveAuthProfile(data);
         appState.user = data;
         updateAuthUIDisplay();
         showToast(`${data.name} でログインしました`, 'success');
@@ -1573,8 +1542,8 @@ async function performDriveSync() {
     if (appState.isSyncing) return;
     appState.isSyncing = true;
 
-    const prevState    = getSyncState();
-    const uploadedIds  = prevState?.uploadedIds || [];
+    const prevState   = getSyncState();
+    const uploadedIds = prevState?.uploadedIds || [];
     setSyncState({ phase: 'start', uploadedIds });
     updateSyncProgress(0, '同期を開始しています...');
 
@@ -1583,90 +1552,77 @@ async function performDriveSync() {
         const folderId      = await getOrCreateSyncFolder();
         const thumbFolderId = await getOrCreateSubFolder('thumbnails', folderId);
 
+        // ── リモートメタJSON取得 ──
         updateSyncProgress(10, 'リモートデータを取得中...');
-        const [metaFileId, plFileId, settingsFileId] = await Promise.all([
-            findDriveFile('tracks_meta.json', 'application/json', folderId),
-            findDriveFile('playlists.json', 'application/json', folderId),
-            findDriveFile('settings.json', 'application/json', folderId)
-        ]);
+        const metaFileId  = await findDriveFile('tracks_meta.json', 'application/json', folderId);
+        const plFileId    = await findDriveFile('playlists.json',   'application/json', folderId);
+        const settingsFileId = await findDriveFile('settings.json', 'application/json', folderId);
 
         let remoteTracks    = [];
         let remotePlaylists = [];
-        let remoteTagOrder   = [];
+        let remoteTagOrder  = [];
 
         if (metaFileId) {
             const res = await driveGet(`https://www.googleapis.com/drive/v3/files/${metaFileId}?alt=media`);
             if (res.ok) {
                 const j = await res.json();
-                remoteTracks = Array.isArray(j.tracks) ? j.tracks : [];
+                remoteTracks = j.tracks || [];
             }
         }
         if (plFileId) {
             const res = await driveGet(`https://www.googleapis.com/drive/v3/files/${plFileId}?alt=media`);
             if (res.ok) {
                 const j = await res.json();
-                remotePlaylists = Array.isArray(j.playlists) ? j.playlists : [];
+                remotePlaylists = j.playlists || [];
             }
         }
         if (settingsFileId) {
             const res = await driveGet(`https://www.googleapis.com/drive/v3/files/${settingsFileId}?alt=media`);
             if (res.ok) {
                 const j = await res.json();
-                remoteTagOrder = Array.isArray(j.tagOrder) ? j.tagOrder : [];
+                remoteTagOrder = j.tagOrder || [];
             }
         }
 
         updateSyncProgress(15, 'ローカルデータを読み込み中...');
         const localTracks    = await getAllTracksFromDBRaw();
         const localPlaylists = await getAllPlaylistsFromDBRaw();
-        const localTrackMap  = new Map(localTracks.map(t => [t.id, t]));
+
+        const localTrackMap    = new Map(localTracks.map(t  => [t.id, t]));
         const localPlaylistMap = new Map(localPlaylists.map(p => [p.id, p]));
 
+        // ── 月次ログ同期 ──
         updateSyncProgress(16, 'ログデータを同期中...');
         await syncLogsWithDrive(folderId);
 
+        // ── タグ順序マージ ──
         if (remoteTagOrder.length > 0) {
+            // リモートにあってローカルにないものを追加
             remoteTagOrder.forEach(t => {
                 if (!appState.tagOrder.includes(t)) appState.tagOrder.push(t);
             });
             syncTagOrder();
         }
 
+        // ── リモート→ローカル メタデータ同期 ──
         updateSyncProgress(18, 'メタデータを比較中...');
-        const remoteTrackIdSet = new Set(remoteTracks.map(t => t.id));
-        const remoteDriveIdSet = new Set(remoteTracks.map(t => t.driveFileId).filter(Boolean));
-
-        // 1) リモートJSONの曲をローカルへ反映
         for (const rTrack of remoteTracks) {
             const lTrack = localTrackMap.get(rTrack.id);
             if (!lTrack) {
                 await saveTrackToDB(rTrack);
                 localTrackMap.set(rTrack.id, rTrack);
             } else {
-                const rTime = rTrack.updatedAt || 0;
-                const lTime = lTrack.updatedAt || 0;
+                const rTime = rTrack.updatedAt || 0, lTime = lTrack.updatedAt || 0;
                 if (rTime > lTime) {
-                    const merged = { ...lTrack, ...rTrack };
+                    const merged = { ...rTrack };
+                    // blobは既存のDB側を保持
                     await saveTrackToDB(merged);
                     localTrackMap.set(rTrack.id, merged);
                 }
             }
         }
 
-        // 2) Drive直追加の音声ファイルを検出してローカルへ追加
-        const driveAudioFiles = await listDriveFilesInFolder(folderId, "mimeType contains 'audio/'");
-        for (const fileInfo of driveAudioFiles) {
-            if (remoteDriveIdSet.has(fileInfo.id)) continue;
-            const imported = await importDriveAudioFile(fileInfo, thumbFolderId);
-            if (imported) {
-                remoteTracks.push(imported);
-                remoteTrackIdSet.add(imported.id);
-                remoteDriveIdSet.add(imported.driveFileId);
-                localTrackMap.set(imported.id, imported);
-            }
-        }
-
-        // 3) サムネイルDL（JSON側の既存分）
+        // ── サムネイルDL（必要なもののみ）──
         const thumbsToDownload = [];
         for (const rTrack of remoteTracks) {
             if (rTrack.deleted || !rTrack.thumbDriveId) continue;
@@ -1675,39 +1631,51 @@ async function performDriveSync() {
                 if (!existing) thumbsToDownload.push(rTrack);
             }
         }
+
+        const thumbTotal = thumbsToDownload.length;
         for (let i = 0; i < thumbsToDownload.length; i++) {
             const rTrack = thumbsToDownload[i];
-            const pct = 20 + Math.round(((i + 1) / Math.max(thumbsToDownload.length, 1)) * 25);
-            updateSyncProgress(pct, `サムネイルDL中 (${i + 1}/${thumbsToDownload.length}): ${rTrack.title}`);
+            const pct = 20 + Math.round(((i + 1) / Math.max(thumbTotal, 1)) * 25);
+            updateSyncProgress(pct, `サムネイルDL中 (${i+1}/${thumbTotal}): ${rTrack.title}`);
+
             const res = await driveGet(`https://www.googleapis.com/drive/v3/files/${rTrack.thumbDriveId}?alt=media`);
             if (res.ok) {
-                const blob = await res.blob();
+                const blob   = await res.blob();
                 const reader = new FileReader();
                 const dataUrl = await new Promise(r => { reader.onload = e => r(e.target.result); reader.readAsDataURL(blob); });
                 await saveThumbToDB(rTrack.id, dataUrl);
                 thumbCache.set(rTrack.id, dataUrl);
             }
+            // メモリ解放 - blobを即座にスコープ外に
         }
 
-        // 4) 音声DL（Drive直追加のうち、ローカルに無いものなど）
+        // ── 音声DL（tracksToDownload）──
         const tracksToDownload = [];
         for (const rTrack of remoteTracks) {
             if (rTrack.deleted || appState.isStreaming || !rTrack.driveFileId) continue;
+            const lTrack = localTrackMap.get(rTrack.id);
+            if (!lTrack) { tracksToDownload.push(rTrack); continue; }
+            // blobが存在しない場合のみDL
             const existingBlob = await getBlobFromDB(rTrack.id);
             if (!existingBlob) tracksToDownload.push(rTrack);
         }
+
+        const dlTotal = tracksToDownload.length;
         for (let i = 0; i < tracksToDownload.length; i++) {
             const rTrack = tracksToDownload[i];
-            const pct = 45 + Math.round(((i + 1) / Math.max(tracksToDownload.length, 1)) * 20);
-            updateSyncProgress(pct, `音声DL中 (${i + 1}/${tracksToDownload.length}): ${rTrack.title}`);
+            const pct    = 45 + Math.round(((i + 1) / Math.max(dlTotal, 1)) * 20);
+            updateSyncProgress(pct, `音声DL中 (${i+1}/${dlTotal}): ${rTrack.title}`);
             setSyncState({ phase: 'downloading', uploadedIds, dlIndex: i });
+
             const blob = await downloadFileFromDrive(rTrack.driveFileId);
             if (blob) {
-                await saveBlobToDB(rTrack.id, blob, rTrack.fileName || rTrack.title, blob.type || 'audio/mpeg');
+                // 1件ずつDBに保存してからblob変数をクリア（Safariメモリ解放）
+                await saveBlobToDB(rTrack.id, blob, rTrack.fileName || rTrack.title, blob.type);
             }
+            // blobはこのスコープを抜けて即GC対象
         }
 
-        // 5) ローカル新規曲をDriveへアップロード
+        // ── アップロードフェーズ ──
         const tracksToUpload = [];
         for (const lTrack of localTrackMap.values()) {
             if (!lTrack.deleted && !lTrack.driveFileId) {
@@ -1717,121 +1685,139 @@ async function performDriveSync() {
                 }
             }
         }
+
+        const ulTotal = tracksToUpload.length;
         for (let i = 0; i < tracksToUpload.length; i++) {
             const { track: lTrack, blob: blobEntry } = tracksToUpload[i];
-            const pct = 65 + Math.round(((i + 1) / Math.max(tracksToUpload.length, 1)) * 20);
-            updateSyncProgress(pct, `音声UP中 (${i + 1}/${tracksToUpload.length}): ${lTrack.title}`);
+            const pct = 65 + Math.round(((i + 1) / Math.max(ulTotal, 1)) * 20);
+            updateSyncProgress(pct, `音声UP中 (${i+1}/${ulTotal}): ${lTrack.title}`);
             setSyncState({ phase: 'uploading', uploadedIds, ulIndex: i });
+
             const fileId = await uploadFileToDrive(blobEntry, lTrack.fileName || lTrack.title, blobEntry.type || 'audio/mpeg', folderId);
             lTrack.driveFileId = fileId;
-            lTrack.updatedAt = Date.now();
+            lTrack.updatedAt   = Date.now();
             await saveTrackToDB(lTrack);
             uploadedIds.push(lTrack.id);
-            localTrackMap.set(lTrack.id, lTrack);
+            setSyncState({ phase: 'uploading', uploadedIds });
         }
 
-        // 6) サムネイルUP
+        // ── サムネイルUP ──
         updateSyncProgress(85, 'サムネイルをアップロード中...');
         for (const lTrack of localTrackMap.values()) {
             if (lTrack.deleted || lTrack.thumbDriveId) continue;
             const dataUrl = thumbCache.get(lTrack.id) || await getThumbFromDB(lTrack.id);
             if (!dataUrl) continue;
-            const thumbBlob = dataUrlToBlob(dataUrl);
-            if (!thumbBlob) continue;
-            const thumbFileId = await uploadFileToDrive(thumbBlob, `thumb_${lTrack.id}.jpg`, 'image/jpeg', thumbFolderId);
+            const blob = dataUrlToBlob(dataUrl);
+            if (!blob) continue;
+            const thumbFileId = await uploadFileToDrive(blob, `thumb_${lTrack.id}.jpg`, 'image/jpeg', thumbFolderId);
             lTrack.thumbDriveId = thumbFileId;
-            lTrack.updatedAt = Date.now();
+            lTrack.updatedAt    = Date.now();
             await saveTrackToDB(lTrack);
             localTrackMap.set(lTrack.id, lTrack);
         }
 
-        // 7) 削除済み曲のDrive削除
-        const deletedTracks = localTracks.filter(t => t.deleted);
-        for (const track of deletedTracks) {
-            if (track.driveFileId) await deleteDriveFile(track.driveFileId);
-            if (track.thumbDriveId) await deleteDriveFile(track.thumbDriveId);
+        // ── プレイリスト同期 ──
+        for (const rPl of remotePlaylists) {
+            const lPl = localPlaylistMap.get(rPl.id);
+            if (!lPl) { await savePlaylistToDB(rPl); localPlaylistMap.set(rPl.id, rPl); }
+            else if ((rPl.updatedAt || 0) > (lPl.updatedAt || 0)) {
+                await savePlaylistToDB(rPl); localPlaylistMap.set(rPl.id, rPl);
+            }
+        }
+        for (const lPl of localPlaylistMap.values()) {
+            if (!remotePlaylists.find(r => r.id === lPl.id)) {
+                // ローカルにしかないプレイリストはそのまま（新規追加扱い）
+            }
         }
 
-        // 8) JSON再構築（削除済みは含めない）
-        const finalTracks = Array.from(localTrackMap.values()).filter(t => !t.deleted).map(t => ({ ...t }));
-        const finalPlaylists = Array.from(localPlaylistMap.values()).filter(p => !p.deleted).map(p => ({ ...p }));
-
-        updateSyncProgress(90, 'メタデータを保存中...');
+        // ── JSON アップロード（88〜95%） ──
+        updateSyncProgress(88, 'メタデータを保存中...');
         setSyncState({ phase: 'json', uploadedIds });
-        await uploadJsonToDrive({ tracks: finalTracks, version: 7, lastSyncedAt: Date.now() }, 'tracks_meta.json', folderId, metaFileId);
-        await uploadJsonToDrive({ playlists: finalPlaylists, lastSyncedAt: Date.now() }, 'playlists.json', folderId, plFileId);
-        await uploadJsonToDrive({ tagOrder: appState.tagOrder, lastSyncedAt: Date.now() }, 'settings.json', folderId, settingsFileId);
 
-        // 9) Drive上で消えているものをローカルからも削除
-        const finalRemoteIds = new Set(finalTracks.map(t => t.id));
-        const staleLocalIds = localTracks
-            .filter(t => t.driveFileId && !t.deleted && !finalRemoteIds.has(t.id))
-            .map(t => t.id);
-        for (const id of [...deletedTracks.map(t => t.id), ...staleLocalIds]) {
-            await purgeTrackFromLocalDB(id);
-        }
+        // tracks_meta.json: blobなし、thumbnailDataUrlなし
+        const finalTracks = Array.from(localTrackMap.values()).map(t => {
+            const { ...rest } = t;
+            return rest;
+        });
+        await uploadJsonToDrive(
+            { tracks: finalTracks, version: 6, lastSyncedAt: Date.now() },
+            'tracks_meta.json', folderId, metaFileId
+        );
 
-        updateSyncProgress(100, '同期が完了しました');
-        clearSyncState();
-        resetPendingOps();
+        await uploadJsonToDrive(
+            { playlists: Array.from(localPlaylistMap.values()), lastSyncedAt: Date.now() },
+            'playlists.json', folderId, plFileId
+        );
+
+        await uploadJsonToDrive(
+            { tagOrder: appState.tagOrder, lastSyncedAt: Date.now() },
+            'settings.json', folderId, settingsFileId
+        );
+
+        // ── ライブラリ再ロード ──
+        updateSyncProgress(95, 'ライブラリを更新中...');
         await loadLibrary();
         await loadPlaylists();
-        renderAnniversaryBanner();
+
+        clearSyncState();
+        resetPendingOps();
+        updateSyncProgress(100, '同期完了');
         showToast('同期が完了しました', 'success');
+
     } catch (error) {
         console.error('同期エラー:', error);
-        updateSyncError('同期中にエラーが発生しました');
+        updateSyncError(error.message || '同期中にエラーが発生しました');
+        showToast('同期に失敗しました', 'error');
     } finally {
         appState.isSyncing = false;
-        updateAuthUIDisplay();
     }
 }
 
-// ─────────────────────────────────────────────
-// Google Drive / Auth / Sync 補助
-// ─────────────────────────────────────────────
-function escapeDriveQueryValue(value) {
-    return String(value ?? '').replace(/'/g, "\\'");
-}
+/** 月次ログの Drive 同期 */
+async function syncLogsWithDrive(folderId) {
+    const logFolderId = await getOrCreateSubFolder('logs', folderId);
+    const localLogs   = await getAllLogsFromDB();
 
-function getScopedSyncFolderName() {
-    const userId = appState.user?.sub || localStorage.getItem(HARMONIA_USER_KEY);
-    return userId ? `${SYNC_FOLDER_NAME}_${userId}` : SYNC_FOLDER_NAME;
-}
-
-function loadSavedAuthProfile() {
-    try {
-        const raw = localStorage.getItem(AUTH_PROFILE_KEY);
-        return raw ? JSON.parse(raw) : null;
-    } catch {
-        return null;
-    }
-}
-
-function saveAuthProfile(profile) {
-    if (!profile || !profile.sub) return;
-    localStorage.setItem(AUTH_PROFILE_KEY, JSON.stringify({
-        sub: String(profile.sub),
-        name: profile.name || '',
-        email: profile.email || '',
-        picture: profile.picture || '',
-        updatedAt: Date.now()
-    }));
-}
-
-function clearAuthProfile() {
-    localStorage.removeItem(AUTH_PROFILE_KEY);
-}
-
-async function driveRequest(url, options = {}) {
-    const headers = Object.assign({}, options.headers || {}, {
-        Authorization: `Bearer ${gapiAccessToken}`
+    // 月ごとにグループ化
+    const monthGroups = {};
+    localLogs.forEach(l => {
+        const d   = new Date(l.timestamp);
+        const key = `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}`;
+        if (!monthGroups[key]) monthGroups[key] = [];
+        monthGroups[key].push(l);
     });
-    return fetch(url, { ...options, headers });
-}
 
-async function driveGet(url) {
-    return driveRequest(url);
+    const localLogIds = new Set(localLogs.map(l => String(l.id)));
+
+    // 過去3ヶ月分だけDL（全件DLは重すぎるため）
+    const now    = new Date();
+    const months = [];
+    for (let i = 0; i < 3; i++) {
+        const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+        months.push(`${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}`);
+    }
+
+    for (const key of months) {
+        const fileName = `logs_${key}.json`;
+        const fileId   = await findDriveFile(fileName, 'application/json', logFolderId);
+        if (fileId) {
+            const res = await driveGet(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`);
+            if (res.ok) {
+                const j = await res.json();
+                for (const rLog of (j.logs || [])) {
+                    if (rLog.id && !localLogIds.has(String(rLog.id))) {
+                        await saveLogToDB({ ...rLog });
+                        localLogIds.add(String(rLog.id));
+                    }
+                }
+            }
+        }
+        // アップロード
+        const logsForMonth = monthGroups[key] || [];
+        if (logsForMonth.length > 0) {
+            await uploadJsonToDrive({ logs: logsForMonth }, fileName, logFolderId, fileId);
+        }
+    }
 }
 
 async function uploadJsonToDrive(obj, filename, folderId, existingId = null) {
@@ -1847,29 +1833,20 @@ function dataUrlToBlob(dataUrl) {
         const arr = new Uint8Array(binary.length);
         for (let i = 0; i < binary.length; i++) arr[i] = binary.charCodeAt(i);
         return new Blob([arr], { type: mime });
-    } catch (e) {
-        return null;
-    }
+    } catch(e) { return null; }
 }
 
-async function listDriveFilesInFolder(parentId, extraQuery = '') {
-    if (!parentId) return [];
-    let q = `'${escapeDriveQueryValue(parentId)}' in parents and trashed=false`;
-    if (extraQuery) q += ` and ${extraQuery}`;
-    const res = await driveGet(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&fields=files(id,name,mimeType,modifiedTime,parents)`);
-    if (!res.ok) return [];
-    const data = await res.json();
-    return Array.isArray(data.files) ? data.files : [];
+async function driveGet(url) {
+    return fetch(url, { headers: { Authorization: `Bearer ${gapiAccessToken}` } });
 }
 
 async function getOrCreateSyncFolder() {
-    const folderName = getScopedSyncFolderName();
-    const existingId = await findDriveFile(folderName, 'application/vnd.google-apps.folder');
+    const existingId = await findDriveFile(SYNC_FOLDER_NAME, 'application/vnd.google-apps.folder');
     if (existingId) return existingId;
     const res = await fetch('https://www.googleapis.com/drive/v3/files', {
         method: 'POST',
         headers: { Authorization: `Bearer ${gapiAccessToken}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: folderName, mimeType: 'application/vnd.google-apps.folder' })
+        body: JSON.stringify({ name: SYNC_FOLDER_NAME, mimeType: 'application/vnd.google-apps.folder' })
     });
     return (await res.json()).id;
 }
@@ -1886,11 +1863,10 @@ async function getOrCreateSubFolder(name, parentId) {
 }
 
 async function findDriveFile(name, mimeType, parentId = null) {
-    let q = `name='${escapeDriveQueryValue(name)}' and trashed=false`;
-    if (mimeType) q += ` and mimeType='${escapeDriveQueryValue(mimeType)}'`;
-    if (parentId) q += ` and '${escapeDriveQueryValue(parentId)}' in parents`;
+    let q = `name='${name}' and trashed=false`;
+    if (mimeType) q += ` and mimeType='${mimeType}'`;
+    if (parentId) q += ` and '${parentId}' in parents`;
     const res  = await driveGet(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&fields=files(id,name)`);
-    if (!res.ok) return null;
     const data = await res.json();
     return (data.files && data.files.length > 0) ? data.files[0].id : null;
 }
@@ -1906,25 +1882,11 @@ async function uploadFileToDrive(blob, filename, mimeType, folderId, existingId 
         fileId = (await metaRes.json()).id;
     }
     await fetch(`https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media`, {
-        method: 'PATCH',
+        method:  'PATCH',
         headers: { Authorization: `Bearer ${gapiAccessToken}`, 'Content-Type': mimeType },
-        body: blob
+        body:    blob
     });
     return fileId;
-}
-
-async function deleteDriveFile(fileId) {
-    if (!fileId) return true;
-    try {
-        const res = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}`, {
-            method: 'DELETE',
-            headers: { Authorization: `Bearer ${gapiAccessToken}` }
-        });
-        return res.ok || res.status === 404;
-    } catch (err) {
-        console.warn('Drive delete failed:', fileId, err);
-        return false;
-    }
 }
 
 async function downloadFileFromDrive(fileId) {
@@ -1933,81 +1895,6 @@ async function downloadFileFromDrive(fileId) {
         if (res.ok) return await res.blob();
     } catch (e) { console.error('ファイルダウンロード失敗:', e); }
     return null;
-}
-
-async function purgeTrackFromLocalDB(trackId) {
-    if (!trackId) return;
-    await deleteBlobFromDB(trackId);
-    await deleteThumbFromDB(trackId);
-    thumbCache.delete(trackId);
-    await deleteTrackFromDB(trackId);
-}
-
-async function importDriveAudioFile(fileInfo, thumbFolderId) {
-    const blob = await downloadFileFromDrive(fileInfo.id);
-    if (!blob) return null;
-    const meta = await readAudioTags(blob);
-    const trackId = `drive_${fileInfo.id}`;
-    const newTrack = {
-        id: trackId,
-        fileName: fileInfo.name,
-        title: meta.title || fileInfo.name.replace(/\.[^/.]+$/, ''),
-        artist: meta.artist || '不明なアーティスト',
-        date: '',
-        tags: [],
-        addedAt: Date.now(),
-        sortOrder: Date.now(),
-        updatedAt: Date.now(),
-        deleted: false,
-        driveFileId: fileInfo.id,
-        thumbDriveId: null
-    };
-    await saveTrackToDB(newTrack);
-    if (!appState.isStreaming) {
-        await saveBlobToDB(newTrack.id, blob, fileInfo.name, blob.type || 'audio/mpeg');
-    }
-    if (meta.picture) {
-        await saveThumbToDB(newTrack.id, meta.picture);
-        thumbCache.set(newTrack.id, meta.picture);
-    }
-    return newTrack;
-}
-
-async function syncLogsWithDrive(folderId) {
-    const logFolderId = await getOrCreateSubFolder('logs', folderId);
-    const localLogs = await getAllLogsFromDB();
-    const merged = new Map(localLogs.map(log => [log.id, log]));
-
-    // 既存のDriveログを取り込み（同一IDなら更新日時が新しいものを採用）
-    const remoteFiles = await listDriveFilesInFolder(logFolderId, "mimeType = 'application/json'");
-    for (const file of remoteFiles) {
-        if (!/^logs_\d{4}-\d{2}\.json$/.test(file.name)) continue;
-        const res = await driveGet(`https://www.googleapis.com/drive/v3/files/${file.id}?alt=media`);
-        if (!res.ok) continue;
-        try {
-            const json = await res.json();
-            for (const log of (json.logs || [])) {
-                const existing = merged.get(log.id);
-                if (!existing || (log.timestamp || 0) > (existing.timestamp || 0)) {
-                    merged.set(log.id, log);
-                }
-            }
-        } catch {}
-    }
-
-    const groups = new Map();
-    for (const log of merged.values()) {
-        const d = new Date(log.timestamp || Date.now());
-        const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-        if (!groups.has(key)) groups.set(key, []);
-        groups.get(key).push(log);
-    }
-
-    for (const [key, logsForMonth] of groups.entries()) {
-        const fileName = `logs_${key}.json`;
-        const fileId = await findDriveFile(fileName, 'application/json', logFolderId);
-        await uploadJsonToDrive({ logs: logsForMonth, lastSyncedAt: Date.now() }, fileName, logFolderId, fileId);
-    }
 }
 
 // ─────────────────────────────────────────────
@@ -2104,15 +1991,6 @@ function getAllPlaylistsFromDBRaw() {
         const req = tx.objectStore('playlists').getAll();
         req.onsuccess = () => resolve(req.result);
         req.onerror   = (e) => reject(e.target.error);
-    });
-}
-
-function deleteTrackFromDB(id) {
-    return new Promise((resolve, reject) => {
-        const tx  = db.transaction(['tracks'], 'readwrite');
-        const req = tx.objectStore('tracks').delete(id);
-        req.onsuccess = () => resolve();
-        req.onerror   = e => reject(e.target.error);
     });
 }
 
