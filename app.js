@@ -3872,3 +3872,4 @@ function getTagColorHex(str) {
     const c = (hash & 0x00FFFFFF).toString(16).toUpperCase();
     return '#' + '000000'.substring(0, 6 - c.length) + c;
 }
+
