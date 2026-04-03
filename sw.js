@@ -4,7 +4,7 @@
  * - 音声ファイル・Drive API レスポンスはキャッシュしない
  */
 
-const CACHE_NAME = 'harmonia-v6';
+const CACHE_NAME = 'harmonia-v7';
 
 // キャッシュするリソース（アプリシェル）
 const CACHE_URLS = [
