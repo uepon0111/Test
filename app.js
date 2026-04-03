@@ -43,6 +43,7 @@ const thumbCache = new Map();
 // localStorage キー
 const SYNC_STATE_KEY    = 'harmonia_sync_state';
 const HARMONIA_USER_KEY = 'harmonia_user_id';
+const AUTH_PROFILE_KEY   = 'harmonia_auth_profile';
 const LAST_SYNC_KEY     = 'harmonia_last_sync';
 const TAG_ORDER_KEY     = 'harmonia_tag_order';
 const PENDING_OPS_KEY   = 'harmonia_pending_ops';
@@ -67,6 +68,7 @@ const appState = {
     searchQueryEdit:    '',
     isLoggedIn:         false,
     user:               null,
+    rememberedUser:     null,
     isSyncing:          false,
     isStreaming:        false,
     isAutoSync:         true,
@@ -95,6 +97,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     initNavigation();
     initAuthUI();
+    restoreRememberedAuthSession();
     initDragAndDrop();
     initPlayerControls();
     initPlaylists();
@@ -201,7 +204,7 @@ function syncTagOrder() {
 // ─────────────────────────────────────────────
 function loadAutoSyncSetting() {
     const saved = localStorage.getItem(AUTO_SYNC_KEY);
-    appState.isAutoSync = (saved === null) ? true : saved === 'true';
+    appState.isAutoSync = (saved === null) ? false : saved === 'true';
 }
 
 function loadPendingOpsCount() {
@@ -1394,11 +1397,9 @@ function showCalendarDayPanel(year, month, day, tracks) {
 // Google ログイン & Drive連携
 // ─────────────────────────────────────────────
 function initAuthUI() {
-    const doLogin = () => {
-        if (!GOOGLE_CLIENT_ID) { showToast('GOOGLE_CLIENT_ID を設定してください', 'error'); return; }
-        if (typeof google === 'undefined' || !google.accounts) {
-            showToast('Google認証システムを読み込み中です。数秒後に再試行してください', 'warning'); return;
-        }
+    const ensureTokenClient = () => {
+        if (!GOOGLE_CLIENT_ID) return null;
+        if (typeof google === 'undefined' || !google.accounts) return null;
         if (!tokenClient) {
             tokenClient = google.accounts.oauth2.initTokenClient({
                 client_id: GOOGLE_CLIENT_ID,
@@ -1412,7 +1413,21 @@ function initAuthUI() {
                 },
             });
         }
-        tokenClient.requestAccessToken();
+        return tokenClient;
+    };
+
+    const doLogin = (silent = false) => {
+        if (!GOOGLE_CLIENT_ID) { showToast('GOOGLE_CLIENT_ID を設定してください', 'error'); return; }
+        if (typeof google === 'undefined' || !google.accounts) {
+            showToast('Google認証システムを読み込み中です。数秒後に再試行してください', 'warning'); return;
+        }
+        const client = ensureTokenClient();
+        if (!client) return;
+        try {
+            client.requestAccessToken(silent ? { prompt: '' } : {});
+        } catch (e) {
+            client.requestAccessToken();
+        }
     };
 
     const doLogout = () => {
@@ -1420,14 +1435,19 @@ function initAuthUI() {
         gapiAccessToken = null;
         appState.isLoggedIn = false;
         appState.user       = null;
+        appState.rememberedUser = null;
+        localStorage.removeItem(AUTH_PROFILE_KEY);
+        localStorage.removeItem(HARMONIA_USER_KEY);
         updateAuthUIDisplay();
         showToast('ログアウトしました');
     };
 
     const settingsBtnLogin  = document.getElementById('settings-btn-login');
     const settingsBtnLogout = document.getElementById('settings-btn-logout');
-    if (settingsBtnLogin)  settingsBtnLogin.addEventListener('click', doLogin);
+    if (settingsBtnLogin)  settingsBtnLogin.addEventListener('click', () => doLogin(false));
     if (settingsBtnLogout) settingsBtnLogout.addEventListener('click', doLogout);
+
+    window.__harmoniaRequestSilentLogin = () => doLogin(true);
 }
 
 function fetchUserInfo(token) {
@@ -1446,12 +1466,48 @@ function fetchUserInfo(token) {
             if (!merge) await clearLocalDataForAccountSwitch();
         }
         localStorage.setItem(HARMONIA_USER_KEY, String(data.sub));
+        localStorage.setItem(AUTH_PROFILE_KEY, JSON.stringify({
+            sub: String(data.sub),
+            name: data.name || '',
+            email: data.email || '',
+            picture: data.picture || ''
+        }));
+        appState.rememberedUser = data;
         appState.user = data;
         updateAuthUIDisplay();
         showToast(`${data.name} でログインしました`, 'success');
         autoSync();
     })
     .catch(err => console.error('ユーザー情報取得エラー:', err));
+}
+
+
+function loadRememberedAuthProfile() {
+    try {
+        const saved = localStorage.getItem(AUTH_PROFILE_KEY);
+        return saved ? JSON.parse(saved) : null;
+    } catch {
+        return null;
+    }
+}
+
+function restoreRememberedAuthSession() {
+    const saved = loadRememberedAuthProfile();
+    if (!saved) return;
+    appState.rememberedUser = saved;
+    const syncStatus = document.getElementById('sync-status');
+    if (syncStatus && !appState.isLoggedIn) {
+        syncStatus.textContent = `${saved.name || 'Googleアカウント'} を復元しています…`;
+    }
+    const trySilent = () => {
+        if (appState.isLoggedIn || gapiAccessToken) return;
+        if (typeof google === 'undefined' || !google.accounts || !window.__harmoniaRequestSilentLogin) {
+            setTimeout(trySilent, 700);
+            return;
+        }
+        window.__harmoniaRequestSilentLogin();
+    };
+    trySilent();
 }
 
 async function clearLocalDataForAccountSwitch() {
@@ -1591,6 +1647,28 @@ async function performDriveSync() {
         const localTrackMap    = new Map(localTracks.map(t  => [t.id, t]));
         const localPlaylistMap = new Map(localPlaylists.map(p => [p.id, p]));
 
+        // ローカルで削除済みのDrive実体はこのタイミングで消す
+        for (const lTrack of localTracks) {
+            if (lTrack && lTrack.deleted) {
+                await deleteDriveFileById(lTrack.driveFileId);
+                await deleteDriveFileById(lTrack.thumbDriveId);
+            }
+        }
+
+        // ── Drive 実体の差分を取得（直接追加/削除に対応） ──
+        updateSyncProgress(16, 'Drive実体を確認中...');
+        const remoteAudioFiles = await listDriveFilesInFolder(folderId, "mimeType contains 'audio/'");
+        const remoteThumbFiles = await listDriveFilesInFolder(thumbFolderId, "mimeType contains 'image/'");
+        const remoteAudioIds   = new Set(remoteAudioFiles.map(f => f.id));
+        const remoteThumbIds   = new Set(remoteThumbFiles.map(f => f.id));
+
+        for (const file of remoteAudioFiles) {
+            const known = Array.from(localTrackMap.values()).find(t => t.driveFileId === file.id);
+            if (!known) {
+                await ingestDriveAudioFile(file, localTrackMap);
+            }
+        }
+
         // ── 月次ログ同期 ──
         updateSyncProgress(16, 'ログデータを同期中...');
         await syncLogsWithDrive(folderId);
@@ -1607,6 +1685,17 @@ async function performDriveSync() {
         // ── リモート→ローカル メタデータ同期 ──
         updateSyncProgress(18, 'メタデータを比較中...');
         for (const rTrack of remoteTracks) {
+            if (rTrack.deleted) {
+                const existed = localTrackMap.get(rTrack.id);
+                if (existed) {
+                    existed.deleted = true;
+                    existed.updatedAt = Date.now();
+                    await saveTrackToDB(existed);
+                    await removeTrackFromAllPlaylists(existed.id);
+                    await deleteLocalTrackArtifacts(existed.id);
+                }
+                continue;
+            }
             const lTrack = localTrackMap.get(rTrack.id);
             if (!lTrack) {
                 await saveTrackToDB(rTrack);
@@ -1619,6 +1708,27 @@ async function performDriveSync() {
                     await saveTrackToDB(merged);
                     localTrackMap.set(rTrack.id, merged);
                 }
+            }
+        }
+
+        // Drive側で消えているものはローカルも削除（driveFileIdを持つもののみ）
+        for (const lTrack of Array.from(localTrackMap.values())) {
+            if (!lTrack || lTrack.deleted) continue;
+            const inMeta = remoteTracks.some(r => r.id === lTrack.id && !r.deleted);
+            const inDrive = lTrack.driveFileId ? remoteAudioIds.has(lTrack.driveFileId) : true;
+            if (!inMeta && lTrack.driveFileId && !inDrive) {
+                lTrack.deleted = true;
+                lTrack.updatedAt = Date.now();
+                await saveTrackToDB(lTrack);
+                await removeTrackFromAllPlaylists(lTrack.id);
+                await deleteLocalTrackArtifacts(lTrack.id);
+            }
+            if (lTrack.thumbDriveId && !remoteThumbIds.has(lTrack.thumbDriveId)) {
+                lTrack.thumbDriveId = null;
+                lTrack.updatedAt = Date.now();
+                await saveTrackToDB(lTrack);
+                await deleteThumbFromDB(lTrack.id);
+                thumbCache.delete(lTrack.id);
             }
         }
 
@@ -1735,10 +1845,12 @@ async function performDriveSync() {
         setSyncState({ phase: 'json', uploadedIds });
 
         // tracks_meta.json: blobなし、thumbnailDataUrlなし
-        const finalTracks = Array.from(localTrackMap.values()).map(t => {
-            const { ...rest } = t;
-            return rest;
-        });
+        const finalTracks = Array.from(localTrackMap.values())
+            .filter(t => !t.deleted)
+            .map(t => {
+                const { ...rest } = t;
+                return rest;
+            });
         await uploadJsonToDrive(
             { tracks: finalTracks, version: 6, lastSyncedAt: Date.now() },
             'tracks_meta.json', folderId, metaFileId
@@ -1895,6 +2007,88 @@ async function downloadFileFromDrive(fileId) {
         if (res.ok) return await res.blob();
     } catch (e) { console.error('ファイルダウンロード失敗:', e); }
     return null;
+}
+
+async function deleteDriveFileById(fileId) {
+    if (!fileId || !gapiAccessToken) return;
+    try {
+        await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}`, {
+            method: 'DELETE',
+            headers: { Authorization: `Bearer ${gapiAccessToken}` }
+        });
+    } catch (e) {
+        console.warn('Driveファイル削除失敗:', fileId, e);
+    }
+}
+
+async function listDriveFilesInFolder(folderId, queryExtra = '') {
+    const files = [];
+    let pageToken = null;
+    do {
+        let q = `'${folderId}' in parents and trashed=false`;
+        if (queryExtra) q += ` and (${queryExtra})`;
+        const url = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&fields=nextPageToken,files(id,name,mimeType,modifiedTime,createdTime,parents)&pageSize=1000${pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : ''}`;
+        const res = await driveGet(url);
+        const data = await res.json();
+        if (data.files && data.files.length) files.push(...data.files);
+        pageToken = data.nextPageToken || null;
+    } while (pageToken);
+    return files;
+}
+
+async function readAudioTagsFromBlob(blob, fileName = 'audio') {
+    if (!blob) return { title: null, artist: null, picture: null };
+    const fileLike = (typeof File !== 'undefined' && !(blob instanceof File))
+        ? new File([blob], fileName, { type: blob.type || 'audio/mpeg' })
+        : blob;
+    return readAudioTags(fileLike);
+}
+
+async function removeTrackFromAllPlaylists(trackId) {
+    const playlists = await getAllPlaylistsFromDBRaw();
+    for (const pl of playlists) {
+        if (Array.isArray(pl.trackIds) && pl.trackIds.includes(trackId)) {
+            pl.trackIds = pl.trackIds.filter(id => id !== trackId);
+            pl.updatedAt = Date.now();
+            await savePlaylistToDB(pl);
+        }
+    }
+}
+
+async function deleteLocalTrackArtifacts(trackId) {
+    await deleteBlobFromDB(trackId);
+    await deleteThumbFromDB(trackId);
+    thumbCache.delete(trackId);
+}
+
+async function ingestDriveAudioFile(file, localTrackMap) {
+    const blob = await downloadFileFromDrive(file.id);
+    if (!blob) return null;
+    const meta = await readAudioTagsFromBlob(blob, file.name);
+    const trackId = `drive_${file.id}`;
+    if (localTrackMap.has(trackId)) return localTrackMap.get(trackId);
+    const track = {
+        id:         trackId,
+        fileName:   file.name,
+        title:      meta.title || file.name.replace(/\.[^/.]+$/, ''),
+        artist:     meta.artist || '不明なアーティスト',
+        date:       '',
+        tags:       [],
+        addedAt:    Date.now(),
+        sortOrder:   Date.now(),
+        updatedAt:  Date.now(),
+        deleted:    false,
+        driveFileId:file.id,
+        thumbDriveId:null
+    };
+    await saveTrackToDB(track);
+    await saveBlobToDB(track.id, blob, file.name, blob.type || file.mimeType || 'audio/mpeg');
+    if (meta.picture) {
+        await saveThumbToDB(track.id, meta.picture);
+        thumbCache.set(track.id, meta.picture);
+    }
+    localTrackMap.set(track.id, track);
+    return track;
 }
 
 // ─────────────────────────────────────────────
@@ -2147,7 +2341,8 @@ async function saveManualOrder() {
 // 曲削除
 // ─────────────────────────────────────────────
 async function deleteTracksCompletely(trackIds) {
-    if (!confirm(`${trackIds.length}曲をライブラリから完全に削除しますか？\nこの操作は元に戻せません。`)) return;
+    if (!confirm(`${trackIds.length}曲をライブラリから完全に削除しますか？
+この操作は元に戻せません。`)) return;
     const playlists = await getAllPlaylistsFromDBRaw();
     for (const pl of playlists) {
         let changed = false;
@@ -2164,18 +2359,20 @@ async function deleteTracksCompletely(trackIds) {
             track.deleted   = true;
             track.updatedAt = Date.now();
             await saveTrackToDB(track);
+            await deleteDriveFileById(track.driveFileId);
+            await deleteDriveFileById(track.thumbDriveId);
         }
-        // blob/thumb も削除
-        await deleteBlobFromDB(id);
-        await deleteThumbFromDB(id);
-        thumbCache.delete(id);
+        await removeTrackFromAllPlaylists(id);
+        await deleteLocalTrackArtifacts(id);
     }
     appState.selectedMainTracks.clear();
     appState.editSelectedTracks.clear();
     showToast(`${trackIds.length}曲 を削除しました`);
     await loadPlaylists();
     await loadLibrary();
-    autoSync();
+    if (appState.isLoggedIn && !appState.isSyncing) {
+        await performDriveSync();
+    }
 }
 
 // ─────────────────────────────────────────────
@@ -3872,4 +4069,3 @@ function getTagColorHex(str) {
     const c = (hash & 0x00FFFFFF).toString(16).toUpperCase();
     return '#' + '000000'.substring(0, 6 - c.length) + c;
 }
-
