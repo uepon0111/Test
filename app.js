@@ -25,6 +25,7 @@ let logChartInstance     = null;
 let logPieChartInstance  = null;
 let isHandlingTrackEnd   = false;
 let bgEndChecker         = null;
+let initialDriveSyncRequested = false;
 
 // 再生速度
 const SPEED_OPTIONS   = [0.5, 0.75, 1, 1.25, 1.5, 2];
@@ -126,6 +127,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         await loadLibrary();
         await loadPlaylists();
         renderAnniversaryBanner();
+        await attemptInitialDriveSync();
     } catch (error) {
         console.error('DB初期化エラー:', error);
     }
@@ -1436,6 +1438,7 @@ function initAuthUI() {
         appState.isLoggedIn = false;
         appState.user       = null;
         appState.rememberedUser = null;
+        initialDriveSyncRequested = false;
         localStorage.removeItem(AUTH_PROFILE_KEY);
         localStorage.removeItem(HARMONIA_USER_KEY);
         updateAuthUIDisplay();
@@ -1476,7 +1479,8 @@ function fetchUserInfo(token) {
         appState.user = data;
         updateAuthUIDisplay();
         showToast(`${data.name} でログインしました`, 'success');
-        autoSync();
+        initialDriveSyncRequested = true;
+        await attemptInitialDriveSync();
     })
     .catch(err => console.error('ユーザー情報取得エラー:', err));
 }
@@ -1575,6 +1579,18 @@ function autoSync() {
         return;
     }
     performDriveSync();
+}
+
+async function attemptInitialDriveSync() {
+    if (!initialDriveSyncRequested) return;
+    if (!db || !appState.isLoggedIn || !gapiAccessToken || appState.isSyncing) return;
+    initialDriveSyncRequested = false;
+    try {
+        await performDriveSync();
+    } catch (e) {
+        console.error('初回Drive同期に失敗:', e);
+        initialDriveSyncRequested = true;
+    }
 }
 
 // ─────────────────────────────────────────────
