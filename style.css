@@ -1406,6 +1406,7 @@ ul, ol { list-style: none; }
     box-shadow: var(--shadow-lg);
     animation: slideModal 0.22s var(--ease);
     overflow: hidden;
+    min-height: 0;
 }
 @keyframes slideModal { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
 .edit-modal-header {
@@ -1415,7 +1416,7 @@ ul, ol { list-style: none; }
     flex-shrink: 0;
 }
 .edit-modal-title { font-size: 16px; font-weight: 700; }
-.edit-modal-body { display: flex; gap: 20px; padding: 18px 22px; overflow-y: auto; flex: 1; }
+.edit-modal-body { display: flex; gap: 20px; padding: 18px 22px; overflow-y: auto; flex: 1; min-height: 0; -webkit-overflow-scrolling: touch; }
 .edit-thumbnail-area { display: flex; flex-direction: column; align-items: center; gap: 10px; flex-shrink: 0; }
 .edit-thumbnail-preview {
     width: 120px; height: 120px;
