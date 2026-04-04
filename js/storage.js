@@ -451,34 +451,34 @@ const Storage = (() => {
      AUDIO METADATA READER (from File)
   ───────────────────────────────────────── */
   async function readAudioMeta(file) {
+    // Drive.extractMeta が利用可能なら ID3パース優先
+    if (typeof Drive !== 'undefined' && Drive.extractMeta) {
+      try {
+        const buf  = await file.arrayBuffer();
+        const meta = await Drive.extractMeta(buf, file.name);
+        // 再生時間はaudio elementで取得
+        const duration = await _probeDuration(file);
+        return { ...meta, duration };
+      } catch { /* fallback below */ }
+    }
+    // フォールバック：ファイル名パース + audio element duration
+    const baseName  = file.name.replace(/\.[^.]+$/, '');
+    let title  = baseName;
+    let artist = '';
+    const dashMatch = baseName.match(/^(.+?)\s+-\s+(.+)$/);
+    if (dashMatch) { artist = dashMatch[1].trim(); title = dashMatch[2].trim(); }
+    const duration = await _probeDuration(file);
+    return { title, artist, duration };
+  }
+
+  function _probeDuration(file) {
     return new Promise(resolve => {
-      // Try reading ID3/mp4 tags via audio element duration probe
-      const audioEl = document.createElement('audio');
+      const el  = document.createElement('audio');
       const url = URL.createObjectURL(file);
-      audioEl.src = url;
-      audioEl.preload = 'metadata';
-
-      // Fallback: parse filename
-      const baseName = file.name.replace(/\.[^.]+$/, '');
-      let title  = baseName;
-      let artist = '';
-
-      // Common pattern: "Artist - Title"
-      const dashMatch = baseName.match(/^(.+?)\s+-\s+(.+)$/);
-      if (dashMatch) {
-        artist = dashMatch[1].trim();
-        title  = dashMatch[2].trim();
-      }
-
-      audioEl.onloadedmetadata = () => {
-        const duration = audioEl.duration || 0;
-        URL.revokeObjectURL(url);
-        resolve({ title, artist, duration });
-      };
-      audioEl.onerror = () => {
-        URL.revokeObjectURL(url);
-        resolve({ title, artist, duration: 0 });
-      };
+      el.src     = url;
+      el.preload = 'metadata';
+      el.onloadedmetadata = () => { URL.revokeObjectURL(url); resolve(el.duration || 0); };
+      el.onerror          = () => { URL.revokeObjectURL(url); resolve(0); };
     });
   }
 
@@ -544,4 +544,3 @@ const Storage = (() => {
     readAudioMeta,
   };
 })();
-
