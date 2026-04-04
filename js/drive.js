@@ -27,7 +27,7 @@ const Drive = (() => {
   /* ─────────────────────────────────────────
      CONFIG  (set CLIENT_ID before deploying)
   ───────────────────────────────────────── */
-  const CLIENT_ID  = '963318517208-gjqi9k8d5v6qr8hk1a4jm54cpdc2i03q.apps.googleusercontent.com';
+  const CLIENT_ID  = '216604412012-80eanap7n3ldoa1npd73v22t9gl552nq.apps.googleusercontent.com';
   const API_KEY    = '';   // not needed for Drive with OAuth
   const SCOPES     = 'https://www.googleapis.com/auth/drive.file openid email profile';
   const FOLDER_NAME = 'Sonora';
