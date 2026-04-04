@@ -147,8 +147,10 @@ const App = (() => {
   ───────────────────────────────────────── */
   async function deleteTrack(id) {
     try {
+      // Drive削除のために先にtrackを取得（Storage.deleteTrack後は消える）
+      const track = await Storage.getTrack(id);
       await Storage.deleteTrack(id);
-      await Drive.onTrackDeleted(id);
+      await Drive.onTrackDeleted(id, track);  // Drive上のファイルも削除
       await UI.refreshAll();
       UI.toast('曲を削除しました');
     } catch (err) {
@@ -430,4 +432,3 @@ const App = (() => {
   };
 
 })();
-
