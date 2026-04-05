@@ -1,23 +1,20 @@
 /**
- * storage.js — IndexedDB wrapper + comprehensive audio metadata parser for Sonora
+ * storage.js — IndexedDB wrapper + audio metadata utilities for Sonora
  *
- * Metadata support:
- *   ID3v2.2  (MP3) — 3-char frame IDs: TT2, TP1, TYE, PIC
- *   ID3v2.3/4(MP3) — 4-char frame IDs: TIT2, TPE1, TDRC/TYER, APIC
- *   iTunes / M4A   — MPEG-4 udta/ilst atoms: ©nam, ©ART, ©day, covr
- *   FLAC           — STREAMINFO + VORBIS_COMMENT + PICTURE metadata blocks
- *   OGG Vorbis     — Vorbis comment header packet
+ * Metadata extraction supports:
+ *   MP3  — ID3v2.3 (plain frame sizes) and ID3v2.4 (syncsafe frame sizes)
+ *   M4A/AAC — MP4 atom parser (moov > udta > meta > ilst > covr)
+ *   FLAC — METADATA_BLOCK_PICTURE
+ *   All  — filename fallback (Artist - Title pattern)
  */
 
 const Storage = (() => {
-  const DB_NAME    = 'SonoraDB';
+  const DB_NAME = 'SonoraDB';
   const DB_VERSION = 1;
-  const STORES     = ['tracks','blobs','playlists','tags','logs','meta'];
+  const STORES = ['tracks','blobs','playlists','tags','logs','meta'];
   let _db = null;
 
-  /* ══════════════════════════════════════════
-     DATABASE
-  ══════════════════════════════════════════ */
+  /* ════════════════ OPEN / SCHEMA ════════════════ */
   function open() {
     if (_db) return Promise.resolve(_db);
     return new Promise((resolve, reject) => {
@@ -55,23 +52,27 @@ const Storage = (() => {
     });
   }
 
-  /* ══════════════════════════════════════════
-     LOW-LEVEL DB HELPERS
-  ══════════════════════════════════════════ */
-  const tx     = (s, m='readonly') => _db.transaction(s, m).objectStore(s);
-  const req2p  = r => new Promise((res,rej) => { r.onsuccess = e => res(e.target.result); r.onerror = e => rej(e.target.error); });
-  const getAll = (s,idx,q) => { const st = tx(s); return req2p((idx ? st.index(idx) : st).getAll(q)); };
+  /* ════════════════ LOW-LEVEL DB ════════════════ */
+  function tx(s, mode='readonly') { return _db.transaction(s, mode).objectStore(s); }
+  function req2p(r) {
+    return new Promise((res,rej) => {
+      r.onsuccess = e => res(e.target.result);
+      r.onerror   = e => rej(e.target.error);
+    });
+  }
+  function getAll(s, idx, q) {
+    const store = tx(s);
+    return req2p((idx ? store.index(idx) : store).getAll(q));
+  }
   const getOne     = (s,k)   => req2p(tx(s).get(k));
   const put        = (s,obj) => req2p(tx(s,'readwrite').put(obj));
   const del        = (s,k)   => req2p(tx(s,'readwrite').delete(k));
   const clearStore = s       => req2p(tx(s,'readwrite').clear());
   const uid        = ()      => Date.now().toString(36) + Math.random().toString(36).slice(2,7);
 
-  /* ══════════════════════════════════════════
-     TRACKS
-  ══════════════════════════════════════════ */
-  const getTracks  = ()  => getAll('tracks');
-  const getTrack   = id  => getOne('tracks', id);
+  /* ════════════════ TRACKS ════════════════ */
+  const getTracks = () => getAll('tracks');
+  const getTrack  = id => getOne('tracks', id);
 
   async function addTrack(data) {
     const existing = await getTracks();
@@ -137,9 +138,7 @@ const Storage = (() => {
     });
   }
 
-  /* ══════════════════════════════════════════
-     BLOBS
-  ══════════════════════════════════════════ */
+  /* ════════════════ BLOBS ════════════════ */
   async function saveBlob(data) {
     const key = 'blob_' + uid();
     await put('blobs', { key, data });
@@ -160,11 +159,9 @@ const Storage = (() => {
     return t?.blobKey ? getBlobUrl(t.blobKey) : null;
   }
 
-  /* ══════════════════════════════════════════
-     PLAYLISTS
-  ══════════════════════════════════════════ */
-  const getPlaylists  = ()  => getAll('playlists');
-  const getPlaylist   = id  => getOne('playlists', id);
+  /* ════════════════ PLAYLISTS ════════════════ */
+  const getPlaylists  = () => getAll('playlists');
+  const getPlaylist   = id => getOne('playlists', id);
   async function createPlaylist(name, desc='') {
     const pl = { id:uid(), name:name.trim()||'新しいプレイリスト', desc, trackIds:[], createdAt:Date.now() };
     await put('playlists', pl); return pl;
@@ -187,9 +184,7 @@ const Storage = (() => {
     await updatePlaylist(pid, { trackIds: pl.trackIds.filter(id => id !== tid) });
   }
 
-  /* ══════════════════════════════════════════
-     TAGS
-  ══════════════════════════════════════════ */
+  /* ════════════════ TAGS ════════════════ */
   async function getTags() {
     const tags = await getAll('tags','by_order');
     return tags.sort((a,b) => (a.order||0)-(b.order||0));
@@ -220,18 +215,14 @@ const Storage = (() => {
     }
   }
 
-  /* ══════════════════════════════════════════
-     LOGS
-  ══════════════════════════════════════════ */
+  /* ════════════════ LOGS ════════════════ */
   const getLogs = () => getAll('logs');
   async function addLog(trackId, dur=0) {
     const log = { id:uid(), trackId, playedAt:Date.now(), duration:dur };
     await put('logs', log); return log;
   }
 
-  /* ══════════════════════════════════════════
-     META
-  ══════════════════════════════════════════ */
+  /* ════════════════ META ════════════════ */
   async function getMeta(key, fallback=null) {
     const rec = await getOne('meta', key);
     return rec ? rec.value : fallback;
@@ -239,9 +230,7 @@ const Storage = (() => {
   const setMeta    = (k,v) => put('meta', { key:k, value:v });
   const deleteMeta = k     => del('meta', k);
 
-  /* ══════════════════════════════════════════
-     SNAPSHOT
-  ══════════════════════════════════════════ */
+  /* ════════════════ SNAPSHOT ════════════════ */
   async function exportSnapshot() {
     const [tracks, playlists, tags, logs] = await Promise.all([
       getTracks(), getPlaylists(), getTags(), getLogs()
@@ -271,538 +260,441 @@ const Storage = (() => {
       if (!exIds.has(log.id)) await put('logs', log);
   }
 
+  /* ════════════════ RESET ════════════════ */
   async function resetAll() {
     for (const s of STORES) await clearStore(s);
   }
 
-  /* ══════════════════════════════════════════
-     ████  METADATA PARSER  ████
+  /* ════════════════════════════════════════════════════════════════════
+     AUDIO METADATA EXTRACTION
+     ────────────────────────────────────────────────────────────────
+     Dispatch order:
+       1. ID3v2  (MP3, usually at byte 0)
+       2. MP4/M4A atoms (ftyp or moov at byte 0)
+       3. FLAC   (fLaC at byte 0)
+       4. Filename fallback
+  ════════════════════════════════════════════════════════════════════ */
 
-     Entry point:   readAudioMeta(file)          — for File objects
-                    parseAudioMetaFromBuffer(buf, filename) — for ArrayBuffers
+  /**
+   * Parse metadata from an ArrayBuffer.
+   * Returns { title, artist, releaseDate, thumbData: ArrayBuffer|null, thumbMime }
+   */
+  function parseAudioMetaFromBuffer(buffer, filename) {
+    const result = _filenameFallback(filename);
+    if (!buffer || buffer.byteLength < 12) return result;
 
-     Returns: { title, artist, releaseDate, thumbData: ArrayBuffer|null, thumbMime }
-  ══════════════════════════════════════════ */
+    const b = new Uint8Array(buffer);
 
-  /* ── Shared result structure ── */
-  function _blankMeta(filename) {
-    const result = { title:'', artist:'', releaseDate:null, thumbData:null, thumbMime:null };
-    const base   = (filename||'').replace(/\.[^.]+$/, '');
-    const dash   = base.match(/^(.+?)\s+-\s+(.+)$/);
-    if (dash) { result.artist = dash[1].trim(); result.title = dash[2].trim(); }
-    else        result.title  = base;
+    // --- ID3v2 ---
+    if (b[0]===0x49 && b[1]===0x44 && b[2]===0x33) {
+      return _parseID3v2(b, result);
+    }
+
+    // --- MP4 / M4A (ftyp or wide or mdat at start) ---
+    // First 4 bytes = box size (big-endian), next 4 = fourcc
+    const fourcc = String.fromCharCode(b[4],b[5],b[6],b[7]);
+    if (fourcc === 'ftyp' || fourcc === 'moov' || fourcc === 'wide' ||
+        fourcc === 'mdat' || fourcc === 'free') {
+      return _parseMP4(b, result);
+    }
+
+    // --- FLAC ---
+    if (b[0]===0x66 && b[1]===0x4C && b[2]===0x61 && b[3]===0x43) {
+      return _parseFLAC(b, result);
+    }
+
     return result;
   }
 
-  /* ── UTF text decoders ── */
-  function _decText(data, enc) {
-    if (!data || !data.length) return '';
-    try {
-      const td = enc === 1 || enc === 2 ? new TextDecoder('utf-16')
-               : enc === 3              ? new TextDecoder('utf-8')
-               :                          new TextDecoder('latin1');
-      return td.decode(data).replace(/\0/g,'').trim();
-    } catch { return ''; }
+  /* ──────── FILENAME FALLBACK ──────── */
+  function _filenameFallback(filename) {
+    const base = (filename||'').replace(/\.[^.]+$/, '');
+    const dash = base.match(/^(.+?)\s+-\s+(.+)$/);
+    return {
+      title:       dash ? dash[2].trim() : base,
+      artist:      dash ? dash[1].trim() : '',
+      releaseDate: null,
+      thumbData:   null,
+      thumbMime:   null,
+    };
   }
 
-  /* ── Read null-terminated string ── */
-  function _readCString(bytes, pos) {
-    const start = pos;
-    while (pos < bytes.length && bytes[pos] !== 0) pos++;
-    return { str: new TextDecoder('latin1').decode(bytes.slice(start, pos)), end: pos + 1 };
-  }
+  /* ──────────────────────────────────────
+     ID3v2  PARSER  (v2.3 and v2.4)
+  ────────────────────────────────────── */
+  function _parseID3v2(b, result) {
+    const major   = b[3];  // 3 = ID3v2.3, 4 = ID3v2.4
+    if (major < 3 || major > 4) return result;
 
-  /* ── Read 32-bit big-endian ── */
-  function _u32be(b, o) { return ((b[o]<<24)|(b[o+1]<<16)|(b[o+2]<<8)|b[o+3]) >>> 0; }
-  /* ── Read syncsafe int ── */
-  function _syncsafe(b, o) {
-    return ((b[o]&0x7F)<<21)|((b[o+1]&0x7F)<<14)|((b[o+2]&0x7F)<<7)|(b[o+3]&0x7F);
-  }
+    const flags   = b[5];
+    const hasExtHdr = !!(flags & 0x40);
 
-  /* ──────────────────────────────────────────
-     ID3v2.3 / ID3v2.4  (MP3)
-     Handles extended headers and all encodings
-  ────────────────────────────────────────── */
-  function _parseID3v23(bytes, result) {
-    const major   = bytes[3]; // 3 or 4
-    const flags   = bytes[5];
-    const tagSize = _syncsafe(bytes, 6);
-    const end     = Math.min(10 + tagSize, bytes.length);
-    let off       = 10;
+    // Tag size: syncsafe integer (bit 7 of each byte always 0)
+    const tagSize = ((b[6]&0x7F)<<21)|((b[7]&0x7F)<<14)|
+                    ((b[8]&0x7F)<<7) | (b[9]&0x7F);
+    const tagEnd  = Math.min(10 + tagSize, b.length);
 
-    // Skip extended header if present (flag bit 6)
-    if (flags & 0x40) {
-      if (off + 4 >= end) return;
-      const extSize = major === 4
-        ? _syncsafe(bytes, off)          // v2.4: syncsafe
-        : _u32be(bytes, off);            // v2.3: plain int
+    let off = 10;
+
+    // Skip extended header (ID3v2.3: 4-byte size; ID3v2.4: syncsafe size)
+    if (hasExtHdr && off + 4 < tagEnd) {
+      let extSize;
+      if (major === 4) {
+        extSize = ((b[off]&0x7F)<<21)|((b[off+1]&0x7F)<<14)|
+                  ((b[off+2]&0x7F)<<7) | (b[off+3]&0x7F);
+      } else {
+        extSize = (b[off]<<24)|(b[off+1]<<16)|(b[off+2]<<8)|b[off+3];
+      }
       off += extSize;
     }
 
-    while (off + 10 < end) {
-      const fid = String.fromCharCode(bytes[off], bytes[off+1], bytes[off+2], bytes[off+3]);
-      if (fid === '\0\0\0\0') break;
+    while (off + 10 < tagEnd) {
+      // Frame ID: 4 ASCII chars
+      const fid = String.fromCharCode(b[off],b[off+1],b[off+2],b[off+3]);
+      if (fid[0] === '\0') break; // padding
 
-      // Frame size: v2.4 uses syncsafe, v2.3 uses plain int
-      const fsz = major === 4
-        ? _syncsafe(bytes, off + 4)
-        : _u32be(bytes, off + 4);
-      off += 10;
+      // Frame size:
+      //   ID3v2.3 → plain 32-bit big-endian
+      //   ID3v2.4 → syncsafe 32-bit
+      let fsz;
+      if (major === 4) {
+        fsz = ((b[off+4]&0x7F)<<21)|((b[off+5]&0x7F)<<14)|
+              ((b[off+6]&0x7F)<<7) | (b[off+7]&0x7F);
+      } else {
+        fsz = (b[off+4]<<24)|(b[off+5]<<16)|(b[off+6]<<8)|b[off+7];
+        if (fsz < 0) fsz = fsz >>> 0;
+      }
+      off += 10; // past frame header
 
-      if (fsz <= 0 || off + fsz > end) break;
-      const fd  = bytes.subarray(off, off + fsz);
-      const enc = fd[0];
+      if (fsz <= 0 || off + fsz > tagEnd) break;
+      const fd = b.subarray(off, off + fsz);
 
       switch (fid) {
-        case 'TIT2': { const v=_decText(fd.subarray(1), enc); if(v) result.title   = v; break; }
-        case 'TPE1': { const v=_decText(fd.subarray(1), enc); if(v) result.artist  = v; break; }
+        case 'TIT2': { const v=_id3Text(fd); if(v) result.title       = v; break; }
+        case 'TPE1': { const v=_id3Text(fd); if(v) result.artist      = v; break; }
         case 'TDRC':
         case 'TYER': {
-          const v = _decText(fd.subarray(1), enc);
-          if (v && /^\d{4}/.test(v)) result.releaseDate = v.slice(0,4)+'-01-01';
+          const v = _id3Text(fd);
+          if (v && /^\d{4}/.test(v) && !result.releaseDate)
+            result.releaseDate = v.slice(0,4)+'-01-01';
           break;
         }
-        case 'APIC':
+        case 'APIC': {
           if (!result.thumbData) {
-            const apic = _parseAPIC(fd);
+            const apic = _id3APIC(fd);
             if (apic) { result.thumbData = apic.data; result.thumbMime = apic.mime; }
           }
           break;
-      }
-      off += fsz;
-    }
-  }
-
-  function _parseAPIC(fd) {
-    if (!fd || fd.length < 6) return null;
-    const enc = fd[0];
-    let pos   = 1;
-
-    // MIME type (null-terminated latin1)
-    const mimeRes = _readCString(fd, pos);
-    let mime      = mimeRes.str.toLowerCase();
-    pos           = mimeRes.end;
-
-    if (pos >= fd.length) return null;
-    pos++; // picture type byte — skip (we accept all types)
-
-    // Description: null-terminated, encoding-aware
-    if (enc === 1 || enc === 2) {
-      // UTF-16: scan for double null (word-aligned)
-      while (pos + 1 < fd.length && !(fd[pos] === 0 && fd[pos+1] === 0)) pos += 2;
-      pos += 2;
-    } else {
-      while (pos < fd.length && fd[pos] !== 0) pos++;
-      pos++;
-    }
-
-    if (pos >= fd.length) return null;
-
-    const imgBytes = fd.slice(pos);
-    if (imgBytes.length < 4) return null;
-
-    // Detect MIME from magic bytes if missing/wrong
-    if (!mime || mime === 'image/' || mime === '-->' || !mime.startsWith('image')) {
-      if (imgBytes[0]===0xFF && imgBytes[1]===0xD8) mime = 'image/jpeg';
-      else if (imgBytes[0]===0x89 && imgBytes[1]===0x50) mime = 'image/png';
-      else mime = 'image/jpeg';
-    }
-
-    return { data: imgBytes.buffer, mime };
-  }
-
-  /* ──────────────────────────────────────────
-     ID3v2.2  (older MP3, 3-char frame IDs)
-  ────────────────────────────────────────── */
-  function _parseID3v22(bytes, result) {
-    const tagSize = ((bytes[6]&0x7F)<<14)|((bytes[7]&0x7F)<<7)|(bytes[8]&0x7F)
-                    | ((bytes[9]&0x7F)); // v2.2 tag size is also 4 syncsafe bytes
-    // Actually v2.2 size: bytes 6-9 syncsafe same as v2.3
-    const end = Math.min(10 + tagSize, bytes.length);
-    let off   = 10;
-
-    while (off + 6 < end) {
-      const fid = String.fromCharCode(bytes[off], bytes[off+1], bytes[off+2]);
-      if (fid === '\0\0\0') break;
-      // Frame size: 3 bytes big-endian in v2.2
-      const fsz = (bytes[off+3]<<16)|(bytes[off+4]<<8)|bytes[off+5];
-      off += 6;
-      if (fsz <= 0 || off + fsz > end) break;
-      const fd  = bytes.subarray(off, off + fsz);
-      const enc = fd[0];
-
-      switch (fid) {
-        case 'TT2': { const v=_decText(fd.subarray(1), enc); if(v) result.title  = v; break; }
-        case 'TP1': { const v=_decText(fd.subarray(1), enc); if(v) result.artist = v; break; }
-        case 'TYE': {
-          const v = _decText(fd.subarray(1), enc);
-          if (v && /^\d{4}/.test(v)) result.releaseDate = v.slice(0,4)+'-01-01';
-          break;
         }
-        case 'PIC':
-          if (!result.thumbData) {
-            const pic = _parsePIC(fd);
-            if (pic) { result.thumbData = pic.data; result.thumbMime = pic.mime; }
-          }
-          break;
       }
       off += fsz;
     }
+    return result;
   }
 
-  function _parsePIC(fd) {
-    if (!fd || fd.length < 6) return null;
-    const enc = fd[0];
-    // v2.2 PIC: encoding(1) + format(3 chars, e.g. "JPG") + picType(1) + desc + img
-    const fmt = String.fromCharCode(fd[1], fd[2], fd[3]).toLowerCase();
-    let mime  = fmt === 'png' ? 'image/png' : 'image/jpeg';
-    let pos   = 4; // skip encoding + format
-    pos++;         // skip picture type
+  /** Decode an ID3 text frame: encoding byte (1) + text */
+  function _id3Text(data) {
+    if (!data || !data.length) return '';
+    const enc = data[0];
+    const raw = data.subarray(1);
+    try {
+      let s;
+      if      (enc === 1) s = new TextDecoder('utf-16').decode(raw);
+      else if (enc === 2) s = new TextDecoder('utf-16be').decode(raw);
+      else if (enc === 3) s = new TextDecoder('utf-8').decode(raw);
+      else                s = new TextDecoder('latin1').decode(raw);
+      return s.replace(/\0/g,'').trim();
+    } catch { return ''; }
+  }
 
-    // Skip description
+  /**
+   * Decode ID3v2 APIC frame.
+   * Layout: encoding(1) | mime(\0) | picType(1) | description(\0 or \0\0) | imageBytes
+   */
+  function _id3APIC(data) {
+    if (!data || data.length < 6) return null;
+    let pos = 0;
+    const enc = data[pos++];
+
+    // MIME (null-terminated Latin1)
+    const mimeStart = pos;
+    while (pos < data.length && data[pos] !== 0) pos++;
+    let mime = new TextDecoder('latin1').decode(data.slice(mimeStart, pos)).toLowerCase().trim();
+    if (pos >= data.length) return null;
+    pos++; // consume null
+
+    // Picture type
+    if (pos >= data.length) return null;
+    pos++; // skip
+
+    // Description: null-terminated (single null for enc 0/3, double null for enc 1/2)
     if (enc === 1 || enc === 2) {
-      while (pos + 1 < fd.length && !(fd[pos]===0 && fd[pos+1]===0)) pos += 2;
-      pos += 2;
+      // Align to even offset if necessary, then scan for \0\0
+      while (pos + 1 < data.length) {
+        if (data[pos] === 0 && data[pos+1] === 0) { pos += 2; break; }
+        pos += 2;
+      }
     } else {
-      while (pos < fd.length && fd[pos] !== 0) pos++;
-      pos++;
+      while (pos < data.length && data[pos] !== 0) pos++;
+      if (pos < data.length) pos++;
     }
 
-    if (pos >= fd.length) return null;
-    const imgBytes = fd.slice(pos);
-    if (imgBytes.length < 4) return null;
+    if (pos >= data.length) return null;
 
-    // Magic byte override
-    if (imgBytes[0]===0x89 && imgBytes[1]===0x50) mime = 'image/png';
-    return { data: imgBytes.buffer, mime };
-  }
+    const img = data.slice(pos); // Uint8Array slice = copy with own buffer
+    if (img.length < 4) return null;
 
-  /* ──────────────────────────────────────────
-     iTunes / M4A / MP4  (MPEG-4 box parser)
-     Atoms we care about:
-       moov → udta → meta → ilst
-         ©nam → title
-         ©ART → artist
-         ©day → date
-         covr → cover art
-  ────────────────────────────────────────── */
-  function _parseM4A(bytes, result) {
-    // Walk top-level boxes looking for 'moov'
-    _walkBoxes(bytes, 0, bytes.length, (name, start, end) => {
-      if (name === 'moov') {
-        _walkBoxes(bytes, start, end, (n2, s2, e2) => {
-          if (n2 === 'udta') {
-            _walkBoxes(bytes, s2, e2, (n3, s3, e3) => {
-              if (n3 === 'meta') {
-                // meta has a 4-byte version/flags prefix before children
-                _walkBoxes(bytes, s3 + 4, e3, (n4, s4, e4) => {
-                  if (n4 === 'ilst') _parseIlst(bytes, s4, e4, result);
-                });
-              }
-            });
-          }
-        });
-        return true; // stop after moov
-      }
-    });
-  }
-
-  function _walkBoxes(bytes, start, end, callback) {
-    let pos = start;
-    while (pos + 8 <= end) {
-      let size = _u32be(bytes, pos);
-      const name = String.fromCharCode(bytes[pos+4], bytes[pos+5], bytes[pos+6], bytes[pos+7]);
-
-      if (size === 1) {
-        // Extended size: 8 more bytes (64-bit, take lower 32)
-        if (pos + 16 > end) break;
-        size = _u32be(bytes, pos + 12); // ignore upper 32 bits
-        const childStart = pos + 16;
-        if (callback(name, childStart, pos + size) === true) return;
-        pos += size; continue;
-      }
-      if (size < 8) break;
-
-      const childStart = pos + 8;
-      if (callback(name, childStart, pos + size) === true) return;
-      pos += size;
+    // Detect MIME from magic bytes if missing
+    if (!mime || mime === 'image/' || mime === '-->' || mime.length < 6) {
+      if      (img[0]===0xFF && img[1]===0xD8)               mime = 'image/jpeg';
+      else if (img[0]===0x89 && img[1]===0x50 && img[2]===0x4E) mime = 'image/png';
+      else if (img[0]===0x47 && img[1]===0x49 && img[2]===0x46) mime = 'image/gif';
+      else if (img[0]===0x52 && img[1]===0x49 && img[2]===0x46 && img[4]===0x57) mime = 'image/webp';
+      else    mime = 'image/jpeg';
     }
+    return { data: img.buffer, mime };
   }
 
-  function _parseIlst(bytes, start, end, result) {
-    _walkBoxes(bytes, start, end, (name, s, e) => {
-      // Each ilst child contains a 'data' box
-      _walkBoxes(bytes, s, e, (dname, ds, de) => {
-        if (dname !== 'data') return;
-        if (de - ds < 8) return;
-        // data box: 4-byte type indicator + 4-byte locale + payload
-        const typeCode = _u32be(bytes, ds);
-        const payload  = bytes.slice(ds + 8, de);
+  /* ──────────────────────────────────────
+     MP4 / M4A  ATOM PARSER
+     Finds: moov > udta > meta > ilst > covr → data
+     Also reads: ©nam (title), ©ART (artist), ©day (date)
+  ────────────────────────────────────── */
+  function _parseMP4(b, result) {
+    // Walk top-level atoms to find 'moov'
+    const moov = _mp4FindAtom(b, 0, b.length, 'moov');
+    if (!moov) return result;
 
-        switch (name) {
-          case '\xa9nam': // ©nam — title
-            if (!result.title) result.title = new TextDecoder('utf-8').decode(payload).replace(/\0/g,'').trim();
+    // moov > udta > meta > ilst  OR  moov > meta > ilst (iTunes variant)
+    let ilst = null;
+
+    const udta = _mp4FindAtom(b, moov.start, moov.end, 'udta');
+    if (udta) {
+      const meta = _mp4FindAtom(b, udta.start, udta.end, 'meta');
+      if (meta) {
+        // meta has a 4-byte version/flags field before child atoms
+        ilst = _mp4FindAtom(b, meta.start + 4, meta.end, 'ilst');
+      }
+    }
+    // Fallback: moov > meta > ilst
+    if (!ilst) {
+      const meta = _mp4FindAtom(b, moov.start, moov.end, 'meta');
+      if (meta) ilst = _mp4FindAtom(b, meta.start + 4, meta.end, 'ilst');
+    }
+    if (!ilst) return result;
+
+    // Walk ilst children
+    let pos = ilst.start;
+    while (pos + 8 < ilst.end) {
+      const sz  = _mp4Be32(b, pos);
+      if (sz < 8 || pos + sz > ilst.end) break;
+      const box = String.fromCharCode(b[pos+4],b[pos+5],b[pos+6],b[pos+7]);
+
+      // Each ilst item contains a 'data' child
+      const dataAtom = _mp4FindAtom(b, pos + 8, pos + sz, 'data');
+      if (dataAtom && dataAtom.end - dataAtom.start >= 8) {
+        // data: version(1) + flags(3) + locale(4) + value
+        const typeInt = _mp4Be32(b, dataAtom.start) & 0x00FFFFFF;
+        const val     = b.subarray(dataAtom.start + 8, dataAtom.end);
+
+        switch (box) {
+          case '\u00a9nam': // ©nam = title
+            if (!result.title || result.title === _filenameFallback('').title) {
+              const s = _mp4Text(val, typeInt); if (s) result.title = s;
+            }
             break;
-          case '\xa9ART': // ©ART — artist
-            if (!result.artist) result.artist = new TextDecoder('utf-8').decode(payload).replace(/\0/g,'').trim();
-            break;
-          case '\xa9day': { // ©day — release date/year
-            const dateStr = new TextDecoder('utf-8').decode(payload).replace(/\0/g,'').trim();
-            if (dateStr && /^\d{4}/.test(dateStr) && !result.releaseDate)
-              result.releaseDate = dateStr.slice(0,4) + '-01-01';
-            break;
-          }
-          case 'covr': // cover art
-            if (!result.thumbData && payload.length > 4) {
-              const mime = (typeCode === 14) ? 'image/png' : 'image/jpeg';
-              result.thumbData = payload.buffer.slice(payload.byteOffset, payload.byteOffset + payload.byteLength);
+          case '\u00a9ART': // ©ART = artist
+            { const s = _mp4Text(val, typeInt); if (s) result.artist = s; break; }
+          case '\u00a9day': // ©day = date/year
+            {
+              const s = _mp4Text(val, typeInt);
+              if (s && /^\d{4}/.test(s) && !result.releaseDate)
+                result.releaseDate = s.slice(0,4)+'-01-01';
+              break;
+            }
+          case 'covr':  // cover art
+            if (!result.thumbData && val.length > 4) {
+              // typeInt: 13=JPEG, 14=PNG
+              const mime = typeInt === 14 ? 'image/png' : 'image/jpeg';
+              result.thumbData = val.buffer.slice(val.byteOffset, val.byteOffset + val.byteLength);
               result.thumbMime = mime;
             }
             break;
         }
-      });
-    });
+      }
+      pos += sz;
+    }
+    return result;
   }
 
-  /* ──────────────────────────────────────────
-     FLAC  (fLaC marker + metadata blocks)
-     Block types: 0=STREAMINFO, 4=VORBIS_COMMENT, 6=PICTURE
-  ────────────────────────────────────────── */
-  function _parseFLAC(bytes, result) {
-    if (bytes.length < 8) return;
-    // Magic: 'fLaC'
-    if (!(bytes[0]===0x66 && bytes[1]===0x4C && bytes[2]===0x61 && bytes[3]===0x43)) return;
+  function _mp4FindAtom(b, start, end, name) {
+    let pos = start;
+    while (pos + 8 <= end) {
+      let sz = _mp4Be32(b, pos);
+      if      (sz === 0) { sz = end - pos; } // atom extends to EOF
+      else if (sz === 1) {                   // 64-bit extended size
+        sz = _mp4Be32(b, pos + 8) + (_mp4Be32(b, pos + 4) * 0x100000000);
+      }
+      if (sz < 8 || pos + sz > end + 8) break;
+      const box = String.fromCharCode(b[pos+4],b[pos+5],b[pos+6],b[pos+7]);
+      if (box === name) return { start: pos + 8, end: Math.min(pos + sz, end) };
+      pos += sz;
+    }
+    return null;
+  }
 
-    let pos = 4;
-    let lastBlock = false;
+  function _mp4Be32(b, off) {
+    return ((b[off]<<24)|(b[off+1]<<16)|(b[off+2]<<8)|b[off+3]) >>> 0;
+  }
 
-    while (!lastBlock && pos + 4 <= bytes.length) {
-      const blockHeader = bytes[pos];
-      lastBlock         = !!(blockHeader & 0x80);
-      const blockType   = blockHeader & 0x7F;
-      const blockSize   = (bytes[pos+1]<<16)|(bytes[pos+2]<<8)|bytes[pos+3];
+  function _mp4Text(data, typeInt) {
+    try {
+      // typeInt 1 = UTF-8, 0 or other = also try UTF-8
+      return new TextDecoder('utf-8').decode(data).replace(/\0/g,'').trim();
+    } catch { return ''; }
+  }
+
+  /* ──────────────────────────────────────
+     FLAC METADATA PARSER
+     Looks for METADATA_BLOCK_PICTURE (block type 6)
+     and VORBIS_COMMENT (block type 4) for title/artist/date
+  ────────────────────────────────────── */
+  function _parseFLAC(b, result) {
+    if (b.length < 8) return result;
+    let pos = 4; // skip 'fLaC'
+    let last = false;
+
+    while (!last && pos + 4 <= b.length) {
+      const hdr      = b[pos];
+      last           = !!(hdr & 0x80);
+      const blockType= hdr & 0x7F;
+      const blockLen = (b[pos+1]<<16)|(b[pos+2]<<8)|b[pos+3];
       pos += 4;
-      if (pos + blockSize > bytes.length) break;
+      if (pos + blockLen > b.length) break;
+      const block = b.subarray(pos, pos + blockLen);
 
       if (blockType === 4) {
         // VORBIS_COMMENT
-        _parseVorbisComment(bytes.subarray(pos, pos + blockSize), result);
+        _parseVorbisComment(block, result);
       } else if (blockType === 6 && !result.thumbData) {
-        // PICTURE
-        _parseFLACPicture(bytes.subarray(pos, pos + blockSize), result);
+        // METADATA_BLOCK_PICTURE (same as APIC but different layout)
+        _parseFLACPicture(block, result);
       }
-      pos += blockSize;
+      pos += blockLen;
     }
+    return result;
   }
 
   function _parseVorbisComment(data, result) {
-    // Little-endian: vendor length(4) + vendor string + count(4) + comments
+    // vendor_length(4LE) | vendor(n) | count(4LE) | [length(4LE)|string]*
     if (data.length < 8) return;
-    const dv = new DataView(data.buffer, data.byteOffset, data.byteLength);
-    const vendorLen = dv.getUint32(0, true);
-    let pos = 4 + vendorLen;
+    let pos = 0;
+    const vendorLen = _le32(data, pos); pos += 4 + vendorLen;
     if (pos + 4 > data.length) return;
-    const count = dv.getUint32(pos, true);
-    pos += 4;
-
-    for (let i = 0; i < count && pos + 4 <= data.length; i++) {
-      const len = dv.getUint32(pos, true);
-      pos += 4;
-      if (pos + len > data.length) break;
-      const comment = new TextDecoder('utf-8').decode(data.subarray(pos, pos + len));
-      pos += len;
+    const count = _le32(data, pos); pos += 4;
+    for (let i=0; i<count && pos+4<=data.length; i++) {
+      const slen = _le32(data, pos); pos += 4;
+      if (pos + slen > data.length) break;
+      const comment = new TextDecoder('utf-8').decode(data.subarray(pos, pos+slen));
+      pos += slen;
       const eq = comment.indexOf('=');
       if (eq < 0) continue;
       const key = comment.slice(0, eq).toUpperCase();
-      const val = comment.slice(eq + 1).trim();
-      switch (key) {
-        case 'TITLE':  if (!result.title  && val) result.title  = val; break;
-        case 'ARTIST': if (!result.artist && val) result.artist = val; break;
-        case 'DATE':
-          if (!result.releaseDate && /^\d{4}/.test(val))
-            result.releaseDate = val.slice(0,4)+'-01-01';
-          break;
-      }
+      const val = comment.slice(eq+1).trim();
+      if (!val) continue;
+      if      (key === 'TITLE'  && !result.title)  result.title  = val;
+      else if (key === 'ARTIST' && !result.artist) result.artist = val;
+      else if ((key === 'DATE' || key === 'YEAR') && !result.releaseDate && /^\d{4}/.test(val))
+        result.releaseDate = val.slice(0,4)+'-01-01';
     }
   }
 
   function _parseFLACPicture(data, result) {
     if (data.length < 32) return;
-    const dv = new DataView(data.buffer, data.byteOffset, data.byteLength);
-    let pos = 4; // skip picture type
-    const mimeLen = dv.getUint32(pos, false); pos += 4;
-    if (pos + mimeLen > data.length) return;
-    const mime = new TextDecoder('latin1').decode(data.subarray(pos, pos + mimeLen));
-    pos += mimeLen;
-    const descLen = dv.getUint32(pos, false); pos += 4;
-    pos += descLen; // skip description
-    pos += 16;      // width(4) + height(4) + depth(4) + indexedColorCount(4)
-    if (pos + 4 > data.length) return;
-    const dataLen = dv.getUint32(pos, false); pos += 4;
-    if (pos + dataLen > data.length) return;
-
-    const imgBytes = data.slice(pos, pos + dataLen);
-    if (imgBytes.length > 4) {
-      result.thumbData = imgBytes.buffer.slice(imgBytes.byteOffset, imgBytes.byteOffset + imgBytes.byteLength);
-      result.thumbMime = mime || 'image/jpeg';
-    }
-  }
-
-  /* ──────────────────────────────────────────
-     OGG Vorbis  (first 3 Ogg pages → Vorbis comment header)
-  ────────────────────────────────────────── */
-  function _parseOGG(bytes, result) {
-    // OGG capture pattern: 0x4F 0x67 0x67 0x53 ('OggS')
-    if (!(bytes[0]===0x4F && bytes[1]===0x67 && bytes[2]===0x67 && bytes[3]===0x53)) return;
-
-    // Iterate OGG pages to find the comment header packet (type=0x03)
     let pos = 0;
-    let pagesScanned = 0;
-    while (pos + 27 <= bytes.length && pagesScanned < 20) {
-      if (!(bytes[pos]===0x4F && bytes[pos+1]===0x67)) break;
-      pagesScanned++;
-
-      const headerType  = bytes[pos + 5];
-      const numSegs     = bytes[pos + 26];
-      if (pos + 27 + numSegs > bytes.length) break;
-
-      // Collect segment sizes
-      let pageDataSize = 0;
-      for (let i = 0; i < numSegs; i++) pageDataSize += bytes[pos + 27 + i];
-
-      const pageData = bytes.subarray(pos + 27 + numSegs, pos + 27 + numSegs + pageDataSize);
-
-      // Vorbis comment packet starts with 0x03 + 'vorbis'
-      if (pageData.length > 7 &&
-          pageData[0] === 0x03 &&
-          pageData[1] === 0x76 && pageData[2] === 0x6F && pageData[3] === 0x72 &&
-          pageData[4] === 0x62 && pageData[5] === 0x69 && pageData[6] === 0x73) {
-        _parseVorbisComment(pageData.subarray(7), result);
-        return; // found what we need
-      }
-
-      pos += 27 + numSegs + pageDataSize;
-    }
+    const picType  = _be32(data, pos); pos += 4;
+    const mimeLen  = _be32(data, pos); pos += 4;
+    const mimeStr  = new TextDecoder('latin1').decode(data.subarray(pos, pos+mimeLen)); pos += mimeLen;
+    const descLen  = _be32(data, pos); pos += 4;
+    pos += descLen; // skip description
+    pos += 16;      // skip width, height, colorDepth, colorCount
+    const dataLen  = _be32(data, pos); pos += 4;
+    if (pos + dataLen > data.length) return;
+    const imgBytes = data.slice(pos, pos + dataLen);
+    result.thumbData = imgBytes.buffer.slice(imgBytes.byteOffset, imgBytes.byteOffset + imgBytes.byteLength);
+    result.thumbMime = mimeStr || 'image/jpeg';
   }
 
-  /* ──────────────────────────────────────────
-     DISPATCHER — detect format and parse
-  ────────────────────────────────────────── */
-  function parseAudioMetaFromBuffer(buffer, filename) {
-    const result = _blankMeta(filename);
-    if (!buffer || buffer.byteLength < 12) return result;
+  function _le32(b, off) {
+    return (b[off]|(b[off+1]<<8)|(b[off+2]<<16)|(b[off+3]<<24)) >>> 0;
+  }
+  function _be32(b, off) {
+    return ((b[off]<<24)|(b[off+1]<<16)|(b[off+2]<<8)|b[off+3]) >>> 0;
+  }
 
-    const bytes = new Uint8Array(buffer);
+  /* ════════════════════════════════════════════════════════════════════
+     readAudioMeta — reads a File object
+     Strategy:
+       1. Peek first 12 bytes to identify format + get tag size
+       2. Read exactly the required bytes (ID3 tag or full file for M4A/FLAC)
+       3. Parse metadata
+       4. Get duration via <audio>
+  ════════════════════════════════════════════════════════════════════ */
+  async function readAudioMeta(file) {
+    let meta = _filenameFallback(file.name);
 
     try {
-      // ID3v2.x
-      if (bytes[0]===0x49 && bytes[1]===0x44 && bytes[2]===0x33) {
-        const major = bytes[3];
-        if (major === 2)        _parseID3v22(bytes, result);
-        else if (major >= 3)    _parseID3v23(bytes, result);
-        // After ID3, might still have atom data (rare but possible)
+      // Step 1: peek header
+      const hdrBuf = await file.slice(0, 12).arrayBuffer();
+      const hdr    = new Uint8Array(hdrBuf);
+
+      let readSize;
+      const fourcc = String.fromCharCode(hdr[4],hdr[5],hdr[6],hdr[7]);
+      const isMP4  = (fourcc==='ftyp'||fourcc==='moov'||fourcc==='wide'||fourcc==='mdat'||fourcc==='free');
+      const isFLAC = (hdr[0]===0x66&&hdr[1]===0x4C&&hdr[2]===0x61&&hdr[3]===0x43);
+
+      if (hdr[0]===0x49 && hdr[1]===0x44 && hdr[2]===0x33 && hdr[3]>=3) {
+        // ID3v2: compute exact tag size from syncsafe int
+        const tagSize = ((hdr[6]&0x7F)<<21)|((hdr[7]&0x7F)<<14)|
+                        ((hdr[8]&0x7F)<<7) | (hdr[9]&0x7F);
+        // Allow up to 30 MB for files with large embedded album art
+        readSize = Math.min(tagSize + 10, 30 * 1024 * 1024);
+      } else if (isMP4 || isFLAC) {
+        // Need to find moov/picture block — may be anywhere in the file
+        // Read up to 50 MB (most M4A metadata is in the first few MB)
+        readSize = Math.min(file.size, 50 * 1024 * 1024);
+      } else {
+        // Unknown format — try a generous slice anyway
+        readSize = Math.min(file.size, 2 * 1024 * 1024);
       }
 
-      // FLAC
-      if (bytes[0]===0x66 && bytes[1]===0x4C) {
-        _parseFLAC(bytes, result);
-      }
+      // Step 2: read the required portion
+      const buf = await file.slice(0, readSize).arrayBuffer();
+      meta = parseAudioMetaFromBuffer(buf, file.name);
 
-      // OGG
-      if (bytes[0]===0x4F && bytes[1]===0x67) {
-        _parseOGG(bytes, result);
-      }
-
-      // M4A / MP4 / AAC — look for 'ftyp' box within first 512 bytes
-      // or just try parsing as M4A if not already identified
-      if (!result.thumbData || (!result.title && !result.artist)) {
-        // Scan for 'ftyp' box marker or 'moov' anywhere in the first portion
-        const head512 = Math.min(512, bytes.length);
-        let looksLikeM4A = false;
-        for (let i = 4; i < head512 - 4; i++) {
-          if (bytes[i]===0x66 && bytes[i+1]===0x74 && bytes[i+2]===0x79 && bytes[i+3]===0x70) {
-            looksLikeM4A = true; break;
-          }
-          if (bytes[i]===0x6D && bytes[i+1]===0x6F && bytes[i+2]===0x6F && bytes[i+3]===0x76) {
-            looksLikeM4A = true; break;
-          }
-        }
-        if (looksLikeM4A) _parseM4A(bytes, result);
-      }
     } catch (e) {
       console.warn('[Storage] Metadata parse error:', e);
     }
 
-    return result;
-  }
-
-  /* ──────────────────────────────────────────
-     readAudioMeta(file)
-     Smart read strategy:
-       1. Peek first 10 bytes to detect format & tag size
-       2. Read exactly the tag block (ID3) or whole file cap (M4A/FLAC/OGG)
-       3. Probe duration via Audio element
-  ────────────────────────────────────────── */
-  async function readAudioMeta(file) {
-    let meta = _blankMeta(file.name);
-
-    try {
-      // Step 1: read first 12 bytes to identify format
-      const headerBuf  = await file.slice(0, 12).arrayBuffer();
-      const hdr        = new Uint8Array(headerBuf);
-
-      let readSize = 0;
-
-      // ID3v2: read exactly tagSize + 10 bytes (covers all ID3 frames incl. cover art)
-      if (hdr[0]===0x49 && hdr[1]===0x44 && hdr[2]===0x33 && hdr[3] >= 2) {
-        const tagSize = _syncsafe(hdr, 6);
-        // tagSize can be 0 for oddly tagged files; fall back to 4 MB
-        readSize = tagSize > 0 ? Math.min(tagSize + 10, 30 * 1024 * 1024) : 4 * 1024 * 1024;
-      }
-      // FLAC: metadata blocks are at the start; cap at 4 MB (covers all blocks)
-      else if (hdr[0]===0x66 && hdr[1]===0x4C) {
-        readSize = Math.min(file.size, 4 * 1024 * 1024);
-      }
-      // OGG: comment header is in first few pages; 512 KB is always enough
-      else if (hdr[0]===0x4F && hdr[1]===0x67) {
-        readSize = Math.min(file.size, 512 * 1024);
-      }
-      // M4A/MP4: moov atom can be anywhere; try 10 MB then full file
-      else {
-        readSize = Math.min(file.size, 10 * 1024 * 1024);
-      }
-
-      const buf = await file.slice(0, readSize).arrayBuffer();
-      meta = parseAudioMetaFromBuffer(buf, file.name);
-
-      // If M4A and moov not found in first 10 MB, try the whole file (moov at end)
-      if (!meta.title && !meta.thumbData &&
-          !(hdr[0]===0x49) && !(hdr[0]===0x66) && !(hdr[0]===0x4F)) {
-        if (readSize < file.size) {
-          const fullBuf = await file.arrayBuffer();
-          meta = parseAudioMetaFromBuffer(fullBuf, file.name);
-        }
-      }
-    } catch (e) {
-      console.warn('[Storage] readAudioMeta error:', e);
-    }
-
-    // Step 3: get duration
-    const duration = await new Promise(resolve => {
-      const a   = document.createElement('audio');
-      const url = URL.createObjectURL(file);
-      a.src = url; a.preload = 'metadata';
-      a.onloadedmetadata = () => { URL.revokeObjectURL(url); resolve(a.duration || 0); };
-      a.onerror          = () => { URL.revokeObjectURL(url); resolve(0); };
-      setTimeout(()      => { URL.revokeObjectURL(url); resolve(0); }, 8000);
-    });
+    // Step 3: duration via Audio element
+    const duration = await _probeDuration(file);
 
     return { ...meta, duration };
   }
 
-  /* ══════════════════════════════════════════
-     PUBLIC API
-  ══════════════════════════════════════════ */
+  function _probeDuration(file) {
+    return new Promise(resolve => {
+      const url = URL.createObjectURL(file);
+      const a   = document.createElement('audio');
+      a.src     = url;
+      a.preload = 'metadata';
+      a.onloadedmetadata = () => { URL.revokeObjectURL(url); resolve(a.duration || 0); };
+      a.onerror          = () => { URL.revokeObjectURL(url); resolve(0); };
+      setTimeout(()      => { try { URL.revokeObjectURL(url); } catch {} resolve(0); }, 8000);
+    });
+  }
+
+  /* ════════════════ PUBLIC ════════════════ */
   return {
     open, uid,
     getTracks, getTrack, addTrack, updateTrack, deleteTrack, reorderTracks,
