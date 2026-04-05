@@ -4,6 +4,16 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>Sonora</title>
+
+  <!-- PWA -->
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#2563EB">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Sonora">
+  <link rel="apple-touch-icon" href="icons/icon.svg">
+
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@300;400;500;600;700&family=Playfair+Display:ital,wght@0,700;1,400&display=swap" rel="stylesheet">
   <style>
@@ -2124,6 +2134,33 @@
 <script src="js/ui.js"></script>
 <script src="js/app.js"></script>
 
+<!-- Service Worker registration (PWA) -->
+<script>
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('./sw.js', { scope: './' })
+        .then(reg => {
+          console.log('[SW] Registered, scope:', reg.scope);
+          // Check for updates
+          reg.addEventListener('updatefound', () => {
+            const nw = reg.installing;
+            nw.addEventListener('statechange', () => {
+              if (nw.state === 'installed' && navigator.serviceWorker.controller) {
+                // New content available — show toast when App is ready
+                const notify = () => {
+                  if (typeof UI !== 'undefined')
+                    UI.toast('アプリを更新しました。再読み込みで反映されます。');
+                };
+                // Wait for App to boot
+                setTimeout(notify, 3000);
+              }
+            });
+          });
+        })
+        .catch(e => console.warn('[SW] Registration failed:', e));
+    });
+  }
+</script>
+
 </body>
 </html>
-
