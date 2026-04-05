@@ -923,23 +923,92 @@
       cursor:pointer;
       transition:all var(--transition);
       background:white;
+      display:flex;
+      flex-direction:column;
     }
     .edit-card:hover { box-shadow:var(--shadow-md); border-color:var(--accent); transform:translateY(-2px); }
+
+    /* Square thumbnail — center-cropped via object-fit:cover */
     .edit-card-art {
       width:100%;
-      aspect-ratio:1;
-      background:linear-gradient(135deg, #DBEAFE, #93C5FD);
-      display:flex;
-      align-items:center;
-      justify-content:center;
+      /* Force square: padding-top trick so height = width regardless of content */
+      position:relative;
+      padding-top:100%;
+      background:linear-gradient(135deg, #DBEAFE 0%, #93C5FD 100%);
+      flex-shrink:0;
       overflow:hidden;
     }
-    .edit-card-art img { width:100%; height:100%; object-fit:cover; }
-    .edit-card-art i { font-size:26px; color:var(--accent); opacity:0.4; }
-    .edit-card-info { padding:10px 11px; }
-    .edit-card-title { font-size:13px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-    .edit-card-artist { font-size:11px; color:var(--text-muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; margin-top:2px; }
-    .edit-card-tags { display:flex; align-items:center; gap:4px; margin-top:6px; flex-wrap:wrap; }
+    .edit-card-art img {
+      position:absolute;
+      inset:0;
+      width:100%;
+      height:100%;
+      object-fit:cover;       /* scale to fill, preserving aspect ratio */
+      object-position:center; /* crop from centre */
+    }
+    .edit-card-art i {
+      position:absolute;
+      top:50%; left:50%;
+      transform:translate(-50%,-50%);
+      font-size:26px;
+      color:var(--accent);
+      opacity:0.4;
+    }
+
+    /* Info section below the thumbnail */
+    .edit-card-info {
+      padding:9px 11px 10px;
+      display:flex;
+      flex-direction:column;
+      gap:3px;
+      flex:1;
+    }
+    .edit-card-title {
+      font-size:13px;
+      font-weight:600;
+      white-space:nowrap;
+      overflow:hidden;
+      text-overflow:ellipsis;
+      color:var(--text-primary);
+      line-height:1.3;
+    }
+    .edit-card-artist {
+      font-size:11px;
+      color:var(--text-secondary);
+      white-space:nowrap;
+      overflow:hidden;
+      text-overflow:ellipsis;
+    }
+    .edit-card-date {
+      font-size:10px;
+      color:var(--text-muted);
+      white-space:nowrap;
+      overflow:hidden;
+      text-overflow:ellipsis;
+    }
+    .edit-card-tags {
+      display:flex;
+      align-items:center;
+      gap:4px;
+      margin-top:4px;
+      flex-wrap:wrap;
+      overflow:hidden;
+      max-height:32px; /* 2 lines max */
+    }
+    /* Tag chip: coloured dot + name */
+    .edit-tag-chip {
+      display:inline-flex;
+      align-items:center;
+      gap:3px;
+      padding:1px 6px 1px 4px;
+      border-radius:20px;
+      font-size:10px;
+      font-weight:500;
+      white-space:nowrap;
+      max-width:90px;
+      overflow:hidden;
+      text-overflow:ellipsis;
+    }
 
     /* Tag manager */
     .tag-manager-wrap { flex:1; overflow-y:auto; padding:18px 20px; }
