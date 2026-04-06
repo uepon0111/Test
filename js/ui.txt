@@ -827,11 +827,14 @@ const UI = (() => {
     }
     _editTracks = list;
 
-    // Portrait (mobile): always 2 columns — CSS !important handles this,
-    // but also clear inline style so CSS takes effect.
+    // Column count:
+    //   Mobile (≤768px): always 2 — inline style is cleared so CSS !important takes over.
+    //   Desktop: 4 or 6 based on _editCols toggle.
+    // CSS media query has !important so it always wins on mobile
+    // even if this block somehow sets an inline style.
     const isMobile = window.matchMedia('(max-width:768px)').matches;
     if (isMobile) {
-      grid.style.gridTemplateColumns = '';   // clear inline → CSS 2-col takes over
+      grid.style.gridTemplateColumns = ''; // let CSS handle it
     } else {
       grid.style.gridTemplateColumns = `repeat(${_editCols}, 1fr)`;
     }
@@ -890,10 +893,11 @@ const UI = (() => {
   }
 
   function toggleEditCols() {
-    // No-op on mobile (CSS forces 2 columns)
+    // On mobile CSS forces 2 columns via !important — toggle has no effect.
     if (window.matchMedia('(max-width:768px)').matches) return;
-    _editCols = _editCols === 4 ? 6 : 4;
-    renderEditGrid();
+    _editCols = (_editCols === 4) ? 6 : 4;
+    const grid = document.getElementById('edit-grid');
+    if (grid) grid.style.gridTemplateColumns = `repeat(${_editCols}, 1fr)`;
   }
 
   function initEditSearch() {
@@ -1473,4 +1477,3 @@ const UI = (() => {
     _removeTagFromEdit,
   };
 })();
-
