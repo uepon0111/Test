@@ -852,7 +852,9 @@ const UI = (() => {
         ? `<span style="font-size:10px;color:var(--text-muted)">+${(t.tags||[]).length - 3}</span>` : '';
 
       return `<div class="edit-card" onclick="UI.openEditTrackModal('${t.id}',event)">
-        <div class="edit-card-art">${thumbHtml}</div>
+        <div class="edit-card-art">
+          <div class="edit-card-art-inner">${thumbHtml}</div>
+        </div>
         <div class="edit-card-info">
           <div class="edit-card-title" title="${_esc(t.title)}">${_esc(t.title)}</div>
           <div class="edit-card-artist" title="${_esc(t.artist)}">${_esc(t.artist)}</div>
@@ -1461,4 +1463,3 @@ const UI = (() => {
     _removeTagFromEdit,
   };
 })();
-
