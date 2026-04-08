@@ -146,9 +146,12 @@ const Player = (() => {
   ───────────────────────────────────────── */
   function togglePlay() {
     if (audio.paused) {
-      if (!audio.src) {
-        // Nothing queued — try first track
-        if (_queue.length > 0) { _currentIdx = 0; _loadCurrent(); }
+      if (!audio.src || _queue.length === 0) {
+        // Nothing queued — load from current display list and start from top
+        const ids = (typeof UI !== 'undefined') ? UI.getDisplayTrackIds() : [];
+        if (ids.length > 0) {
+          setQueue(ids, 0);
+        }
         return;
       }
       audio.play();
