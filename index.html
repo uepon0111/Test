@@ -940,23 +940,21 @@
       overflow:visible;
     }
 
-    /* Square art area using aspect-ratio:1/1 for reliable square crops */
+    /* Square art: padding-bottom:100% forces height = width regardless of grid/flex context */
     .edit-card-art {
       width:100%;
-      aspect-ratio:1/1;
+      position:relative;
+      padding-bottom:100%;
       flex-shrink:0;
       background:linear-gradient(135deg, #DBEAFE 0%, #93C5FD 100%);
       border-radius:var(--r-md) var(--r-md) 0 0;
       overflow:hidden;
       border:1.5px solid var(--border);
       border-bottom:none;
-      display:flex;
-      align-items:center;
-      justify-content:center;
     }
     .edit-card-art-inner {
-      width:100%;
-      height:100%;
+      position:absolute;
+      inset:0;
       display:flex;
       align-items:center;
       justify-content:center;
