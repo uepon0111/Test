@@ -990,6 +990,10 @@ const UI = (() => {
         </div>
       </div>`;
     }).join('');
+
+    // After DOM insertion, measure actual rendered card width and set
+    // explicit pixel height on every art div to guarantee uniform squares.
+    requestAnimationFrame(() => _equalizeEditThumbs());
   }
 
   function applyEditSort() {
@@ -1599,12 +1603,48 @@ const UI = (() => {
   /* ─────────────────────────────────────────
      INIT
   ───────────────────────────────────────── */
+  /* ─────────────────────────────────────────
+     EQUALIZE EDIT THUMBNAILS
+     Measures actual rendered card width and sets
+     an explicit pixel height on each art div so
+     all thumbnails are perfectly uniform squares
+     regardless of grid/flex/zoom/scroll context.
+  ───────────────────────────────────────── */
+  let _editGridRO = null;
+
+  function _equalizeEditThumbs() {
+    const grid = document.getElementById('edit-grid');
+    if (!grid) return;
+    const cards = grid.querySelectorAll('.edit-card');
+    if (!cards.length) return;
+    // All cards have the same width inside a CSS grid (equal 1fr columns).
+    // Measure the first card's actual rendered width and apply as height to all art divs.
+    const w = cards[0].getBoundingClientRect().width;
+    if (!w) return;
+    cards.forEach(card => {
+      const art = card.querySelector('.edit-card-art');
+      if (art) {
+        art.style.paddingBottom = '0';
+        art.style.height = Math.round(w) + 'px';
+      }
+    });
+  }
+
+  function _initEditGridResizeObserver() {
+    const grid = document.getElementById('edit-grid');
+    if (!grid || !window.ResizeObserver) return;
+    if (_editGridRO) _editGridRO.disconnect();
+    _editGridRO = new ResizeObserver(() => _equalizeEditThumbs());
+    _editGridRO.observe(grid);
+  }
+
   function init() {
     _initVirtualList();
     _initUploadDropZone();
     initSearch();
     initEditSearch();
     _initTagInput();
+    _initEditGridResizeObserver();
 
     // Sort select change
     const sortSel = document.getElementById('pl-sort-select');
