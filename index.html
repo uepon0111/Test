@@ -940,17 +940,18 @@
       overflow:visible;
     }
 
-    /* Square art: padding-bottom:100% forces height = width regardless of grid/flex context */
+    /* Square art: padding-bottom:100% is relative to WIDTH, so always creates a perfect square.
+     * Works in any flex/grid context, all browsers. Inner img uses object-fit:cover to crop center. */
     .edit-card-art {
       width:100%;
       position:relative;
       padding-bottom:100%;
       flex-shrink:0;
-      background:linear-gradient(135deg, #DBEAFE 0%, #93C5FD 100%);
-      border-radius:var(--r-md) var(--r-md) 0 0;
       overflow:hidden;
+      border-radius:var(--r-md) var(--r-md) 0 0;
       border:1.5px solid var(--border);
       border-bottom:none;
+      background:linear-gradient(135deg, #DBEAFE 0%, #93C5FD 100%);
     }
     .edit-card-art-inner {
       position:absolute;
@@ -958,7 +959,6 @@
       display:flex;
       align-items:center;
       justify-content:center;
-      overflow:hidden;
     }
     .edit-card-art-inner img {
       width:100%;
@@ -967,7 +967,11 @@
       object-position:center;
       display:block;
     }
-    .edit-card-art-inner i { font-size:28px; color:var(--accent); opacity:0.35; }
+    .edit-card-art-inner i {
+      font-size:28px;
+      color:var(--accent);
+      opacity:0.35;
+    }
 
     /* Info section — always below the square art */
     .edit-card-info {
