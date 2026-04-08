@@ -955,9 +955,13 @@ const UI = (() => {
 
     grid.innerHTML = list.map(t => {
       // Thumbnail wrapped in inner div for padding-top 1:1 square trick
-      const thumbInner = t._thumbUrl
-        ? `<img src="${t._thumbUrl}" alt="">`
-        : '<i class="fa-solid fa-music"></i>';
+      // Art: use background-image for guaranteed square crop in all column/layout contexts
+      const artStyle = t._thumbUrl
+        ? `background-image:url('${t._thumbUrl}')`
+        : '';
+      const artInner = t._thumbUrl
+        ? ''
+        : '<div class="edit-card-art-placeholder"><i class="fa-solid fa-music"></i></div>';
 
       // Release date
       const dateHtml = t.releaseDate
@@ -977,9 +981,7 @@ const UI = (() => {
         ? `<span style="font-size:10px;color:var(--text-muted)">+${(t.tags||[]).length - 3}</span>` : '';
 
       return `<div class="edit-card" onclick="UI.openEditTrackModal('${t.id}',event)">
-        <div class="edit-card-art">
-          <div class="edit-card-art-inner">${thumbInner}</div>
-        </div>
+        <div class="edit-card-art" style="${artStyle}">${artInner}</div>
         <div class="edit-card-info">
           <div class="edit-card-title" title="${_esc(t.title)}">${_esc(t.title)}</div>
           <div class="edit-card-artist" title="${_esc(t.artist)}">${_esc(t.artist)}</div>
