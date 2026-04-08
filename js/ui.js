@@ -1705,5 +1705,8 @@ const UI = (() => {
     _toggleSelect,
     _removeFromQueue,
     _removeTagFromEdit,
+
+    // Expose display track IDs for Player (used when queue is empty and play is pressed)
+    getDisplayTrackIds: () => _displayTracks.map(t => t.id),
   };
 })();
