@@ -1,6 +1,0 @@
-{
-  "name": "RailMaster Simulator",
-  "description": "Infinite grid-based railway simulator with station configuration, track laying, and detailed scheduling.",
-  "requestFramePermissions": [],
-  "majorCapabilities": []
-}
