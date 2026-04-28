@@ -1,6 +1,0 @@
-{
-  "name": "簡易鉄道シミュレーター (Railway Sim)",
-  "description": "駅配置、配線、ダイヤ設定が可能な鉄道運行シミュレーター。ブラウザ保存対応。",
-  "requestFramePermissions": [],
-  "majorCapabilities": []
-}
