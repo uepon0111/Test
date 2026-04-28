@@ -28,6 +28,8 @@
       --white: #FFFFFF;
       --gold: #F59E0B;
       --gold-light: #FEF3C7;
+      --red: #EF4444;
+      --red-light: #FEE2E2;
       --green: #10B981;
       --font: 'Sora', 'Hiragino Sans', 'Noto Sans JP', 'Meiryo', sans-serif;
       --radius-xs: 6px;
@@ -113,6 +115,7 @@
     }
     .icon-btn:hover { background: var(--slate-100); color: var(--slate-700); }
     .icon-btn.is-fav { color: var(--gold); }
+    .icon-btn.is-imp { color: var(--red); }
     .icon-btn.is-revealed { color: var(--blue-500); }
 
     /* ===== PRIMARY BUTTON ===== */
@@ -218,7 +221,7 @@
     /* Desktop: home cards side by side */
     @media (min-width: 640px) {
       .home-cards { flex-direction: row; }
-      .home-card { flex-direction: column; align-items: flex-start; min-height: 130px; }
+      .home-card { flex: 1; flex-direction: column; align-items: flex-start; min-height: 130px; }
     }
 
     /* ================================================================
@@ -282,6 +285,19 @@
       color: var(--white);
     }
     .chip.fav-chip.active { background: var(--gold); border-color: var(--gold); }
+    .chip.imp-chip.active { background: var(--red); border-color: var(--red); }
+
+    /* Left button group in word-item */
+    .word-btns-left {
+      display: flex; flex-direction: row; gap: 2px; flex-shrink: 0;
+    }
+
+    /* Action buttons group in q-card */
+    .q-card-actions {
+      position: absolute; top: 14px; right: 14px;
+      display: flex; flex-direction: row; gap: 4px;
+    }
+    .q-card-actions .icon-btn { width: 38px; height: 38px; font-size: 1rem; }
 
     .list-meta {
       padding: 7px 16px;
@@ -327,13 +343,7 @@
     }
     .word-jp.concealed { display: none; }
 
-    /* Desktop: inline meaning */
-    @media (min-width: 768px) {
-      .word-item { padding: 11px 20px; }
-      .word-body { flex-direction: row; align-items: center; gap: 0; }
-      .word-en { min-width: 160px; flex-shrink: 0; padding-top: 0; }
-      .word-jp { margin-top: 0; flex: 1; padding-left: 12px; border-left: 1px solid var(--slate-100); margin-left: 12px; }
-    }
+    /* word-body inline layout now in 568px breakpoint */
 
     .empty-state {
       display: flex; flex-direction: column; align-items: center; justify-content: center;
@@ -404,6 +414,33 @@
     .resume-box-text { flex: 1; font-size: 0.85rem; color: var(--slate-700); line-height: 1.5; }
     .resume-box-text strong { color: var(--blue-600); font-weight: 700; }
 
+    /* Resume select panel */
+    #quiz-panel-resume {
+      flex: 1; overflow-y: auto;
+      padding: 20px 16px 40px;
+    }
+    .resume-select-hero {
+      display: flex; flex-direction: column; align-items: center;
+      gap: 12px; text-align: center; padding: 32px 0 24px;
+    }
+    .resume-select-icon {
+      width: 72px; height: 72px;
+      background: linear-gradient(135deg, var(--blue-500), var(--blue-400));
+      border-radius: 22px;
+      display: flex; align-items: center; justify-content: center;
+      box-shadow: var(--shadow-blue);
+    }
+    .resume-select-icon i { color: var(--white); font-size: 1.8rem; }
+    .resume-select-title { font-size: 1.3rem; font-weight: 800; color: var(--slate-900); letter-spacing: -0.03em; }
+    .resume-select-sub { font-size: 0.88rem; color: var(--slate-500); }
+    .resume-select-badge {
+      display: inline-flex; align-items: center; gap: 6px;
+      background: var(--blue-50); color: var(--blue-600);
+      font-size: 0.82rem; font-weight: 700;
+      padding: 5px 16px; border-radius: 20px;
+      border: 1px solid var(--blue-100);
+    }
+
     .start-actions { display: flex; flex-direction: column; gap: 10px; }
 
     /* --- Active Panel --- */
@@ -443,15 +480,12 @@
       gap: 20px; position: relative;
       min-height: 200px; text-align: center;
     }
-    .q-fav-btn {
-      position: absolute; top: 14px; right: 14px;
-      width: 38px; height: 38px; font-size: 1rem;
-    }
+    /* q-fav-btn positioning now handled by .q-card-actions wrapper */
     .q-word {
       font-size: 2.4rem; font-weight: 800;
       color: var(--slate-900); letter-spacing: -0.04em;
       word-break: break-word; line-height: 1.15;
-      padding: 0 40px;
+      padding: 0 96px;
     }
     .q-meaning {
       font-size: 0.95rem; color: var(--slate-500);
@@ -513,17 +547,36 @@
     /* ================================================================
        DESKTOP / LANDSCAPE TWEAKS
     ================================================================ */
+    /* 568px+: landscape phones & tablets */
+    @media (min-width: 568px) {
+      .list-controls { flex-direction: row; flex-wrap: wrap; align-items: center; padding: 12px 20px; }
+      .search-wrap { flex: 1; min-width: 180px; }
+      .list-meta { padding: 8px 20px; }
+      .word-item { padding: 11px 20px; align-items: center; }
+      .word-num-badge { padding-top: 0; }
+      .word-body { flex-direction: row; align-items: center; gap: 0; }
+      .word-en { min-width: 140px; flex-shrink: 0; padding-top: 0; }
+      .word-jp { margin-top: 0; flex: 1; padding-left: 12px; border-left: 1px solid var(--slate-100); margin-left: 12px; }
+    }
+    /* 768px+: desktop */
     @media (min-width: 768px) {
       .app-header { padding: 0 24px; height: 58px; }
-      .list-controls { flex-direction: row; flex-wrap: wrap; align-items: center; padding: 14px 24px; }
-      .search-wrap { flex: 1; min-width: 200px; }
+      .list-controls { padding: 14px 24px; }
       .list-meta { padding: 8px 24px; }
+      .word-item { padding: 11px 24px; }
+      .word-en { min-width: 160px; }
       #quiz-panel-setup { padding: 28px 24px 48px; }
       #quiz-panel-active { padding: 24px 24px 40px; gap: 18px; }
       .q-card { padding: 40px 36px 36px; min-height: 240px; }
-      .q-word { font-size: 3rem; }
+      .q-word { font-size: 3rem; padding: 0 104px; }
       .q-nav-btn { flex: none; min-width: 120px; }
       .q-nav { justify-content: center; }
+    }
+    /* compact landscape (very short viewport) */
+    @media (max-height: 480px) {
+      #quiz-panel-active { padding: 8px 16px 12px; gap: 8px; }
+      .q-card { min-height: 120px; padding: 16px 24px 14px; }
+      .q-word { font-size: 1.8rem; }
     }
     @media (min-width: 1024px) {
       #screen-list { max-width: 900px; margin: 0 auto; width: 100%; align-self: center; }
@@ -585,8 +638,14 @@
       </button>
     </div>
     <div class="chips-row">
-      <button class="chip fav-chip" id="chip-fav" onclick="List.toggleFavFilter()">
+      <button class="chip active" id="chip-all" onclick="List.setFilter('all')">
+        <i class="fa-solid fa-list-ul"></i>全て
+      </button>
+      <button class="chip fav-chip" id="chip-fav" onclick="List.setFilter('fav')">
         <i class="fa-solid fa-star"></i>お気に入り
+      </button>
+      <button class="chip imp-chip" id="chip-imp" onclick="List.setFilter('imp')">
+        <i class="fa-solid fa-bookmark"></i>重要
       </button>
       <button class="chip active" id="chip-asc" onclick="List.setSort('asc')">
         <i class="fa-solid fa-arrow-up-short-wide"></i>昇順
@@ -594,7 +653,7 @@
       <button class="chip" id="chip-desc" onclick="List.setSort('desc')">
         <i class="fa-solid fa-arrow-down-wide-short"></i>降順
       </button>
-      <button class="chip" id="chip-rand" onclick="List.setSort('random')">
+      <button class="chip" id="chip-random" onclick="List.setSort('random')">
         <i class="fa-solid fa-shuffle"></i>ランダム
       </button>
     </div>
@@ -626,6 +685,9 @@
           <button class="opt-btn" id="src-fav" onclick="Quiz.setSrc('fav')">
             <i class="fa-solid fa-star"></i>お気に入りのみ
           </button>
+          <button class="opt-btn" id="src-imp" onclick="Quiz.setSrc('imp')">
+            <i class="fa-solid fa-bookmark"></i>重要のみ
+          </button>
         </div>
       </div>
 
@@ -648,18 +710,28 @@
         </div>
       </div>
 
-      <div id="resume-box" class="resume-box hidden">
-        <i class="fa-solid fa-rotate-right"></i>
-        <div class="resume-box-text">
-          前回の途中から再開できます：<strong id="resume-label">—</strong>
-        </div>
-      </div>
-
       <div class="start-actions">
-        <button class="btn-primary full hidden" id="btn-resume" onclick="Quiz.start(true)">
+        <button class="btn-primary full" onclick="Quiz.start(false)">
+          <i class="fa-solid fa-play"></i>最初から開始
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- RESUME SELECT -->
+  <div id="quiz-panel-resume" class="hidden">
+    <div class="setup-inner">
+      <div class="resume-select-hero">
+        <div class="resume-select-icon"><i class="fa-solid fa-rotate-right"></i></div>
+        <div class="resume-select-title">前回の続きがあります</div>
+        <div class="resume-select-badge" id="resume-select-label">— / — 語目</div>
+        <div class="resume-select-sub">続きから再開しますか？</div>
+      </div>
+      <div class="start-actions">
+        <button class="btn-primary full" onclick="Quiz.start(true)">
           <i class="fa-solid fa-rotate-right"></i>途中から開始
         </button>
-        <button class="btn-primary full" onclick="Quiz.start(false)">
+        <button class="btn-outline full" onclick="Quiz.showSetup()">
           <i class="fa-solid fa-play"></i>最初から開始
         </button>
       </div>
@@ -676,9 +748,14 @@
       <div class="q-wordnum" id="q-wordnum">#—</div>
     </div>
     <div class="q-card">
-      <button class="icon-btn q-fav-btn" id="q-fav-btn" onclick="Quiz.toggleFav()" title="お気に入り">
-        <i class="fa-regular fa-star"></i>
-      </button>
+      <div class="q-card-actions">
+        <button class="icon-btn q-fav-btn" id="q-fav-btn" onclick="Quiz.toggleFav()" title="お気に入り">
+          <i class="fa-regular fa-star"></i>
+        </button>
+        <button class="icon-btn q-imp-btn" id="q-imp-btn" onclick="Quiz.toggleImp()" title="重要">
+          <i class="fa-regular fa-bookmark"></i>
+        </button>
+      </div>
       <div class="q-word" id="q-word">—</div>
       <div class="q-meaning hidden" id="q-meaning">—</div>
     </div>
@@ -718,10 +795,11 @@
 /* ============================================================
    DATA & STORAGE
 ============================================================ */
-const SK = { favs: 'vt_favs', prog: 'vt_prog' };
+const SK = { favs: 'vt_favs', imps: 'vt_imps', prog: 'vt_prog' };
 
 let allWords = [];    // [{id, word, meaning}]
 let favSet = new Set();
+let impSet = new Set();
 
 function saveFavs() {
   try { localStorage.setItem(SK.favs, JSON.stringify([...favSet])); } catch(e) {}
@@ -731,6 +809,15 @@ function loadFavs() {
     const d = localStorage.getItem(SK.favs);
     if (d) favSet = new Set(JSON.parse(d));
   } catch(e) { favSet = new Set(); }
+}
+function saveImps() {
+  try { localStorage.setItem(SK.imps, JSON.stringify([...impSet])); } catch(e) {}
+}
+function loadImps() {
+  try {
+    const d = localStorage.getItem(SK.imps);
+    if (d) impSet = new Set(JSON.parse(d));
+  } catch(e) { impSet = new Set(); }
 }
 function saveProg(data) {
   try { localStorage.setItem(SK.prog, JSON.stringify(data)); } catch(e) {}
@@ -802,7 +889,7 @@ const App = {
 ============================================================ */
 const List = {
   search: '',
-  favOnly: false,
+  filter: 'all',
   sort: 'asc',
   revealed: new Set(),
   _debounce: null,
@@ -826,9 +913,11 @@ const List = {
     this.render();
   },
 
-  toggleFavFilter() {
-    this.favOnly = !this.favOnly;
-    document.getElementById('chip-fav').classList.toggle('active', this.favOnly);
+  setFilter(f) {
+    this.filter = f;
+    ['all','fav','imp'].forEach(x =>
+      document.getElementById('chip-' + x).classList.toggle('active', x === f)
+    );
     this.render();
   },
 
@@ -842,7 +931,8 @@ const List = {
 
   getWords() {
     let w = allWords.filter(x => {
-      if (this.favOnly && !favSet.has(x.id)) return false;
+      if (this.filter === 'fav' && !favSet.has(x.id)) return false;
+      if (this.filter === 'imp' && !impSet.has(x.id)) return false;
       if (!this.search) return true;
       const q = this.search;
       return x.id.toString().includes(q) ||
@@ -872,20 +962,26 @@ const List = {
     const frag = document.createDocumentFragment();
     words.forEach(w => {
       const isFav = favSet.has(w.id);
+      const isImp = impSet.has(w.id);
       const isRev = this.revealed.has(w.id);
       const div = document.createElement('div');
       div.className = 'word-item';
       div.dataset.wid = w.id;
       div.innerHTML =
-        `<button class="icon-btn ${isFav?'is-fav':''}" onclick="List.toggleFav(${w.id},this)" title="お気に入り">
-          <i class="fa-${isFav?'solid':'regular'} fa-star"></i>
-        </button>
+        `<div class="word-btns-left">
+          <button class="icon-btn fav-btn ${isFav?'is-fav':''}" onclick="List.toggleFav(${w.id},this)" title="お気に入り">
+            <i class="fa-${isFav?'solid':'regular'} fa-star"></i>
+          </button>
+          <button class="icon-btn imp-btn ${isImp?'is-imp':''}" onclick="List.toggleImp(${w.id},this)" title="重要">
+            <i class="fa-${isImp?'solid':'regular'} fa-bookmark"></i>
+          </button>
+        </div>
         <span class="word-num-badge">${w.id}</span>
         <div class="word-body">
           <span class="word-en">${esc(w.word)}</span>
           <span class="word-jp ${isRev?'':'concealed'}">${esc(w.meaning)}</span>
         </div>
-        <button class="icon-btn ${isRev?'is-revealed':''}" onclick="List.toggleMeaning(${w.id},this)" title="意味の表示切替">
+        <button class="icon-btn eye-btn ${isRev?'is-revealed':''}" onclick="List.toggleMeaning(${w.id},this)" title="意味の表示切替">
           <i class="fa-${isRev?'solid':'regular'} fa-eye"></i>
         </button>`;
       frag.appendChild(div);
@@ -895,11 +991,45 @@ const List = {
   },
 
   toggleFav(id, btn) {
-    if (favSet.has(id)) { favSet.delete(id); btn.classList.remove('is-fav'); btn.innerHTML='<i class="fa-regular fa-star"></i>'; }
-    else                { favSet.add(id);    btn.classList.add('is-fav');    btn.innerHTML='<i class="fa-solid fa-star"></i>'; }
+    if (favSet.has(id)) {
+      favSet.delete(id);
+      btn.classList.remove('is-fav');
+      btn.innerHTML = '<i class="fa-regular fa-star"></i>';
+      // Also remove imp when fav is removed
+      if (impSet.has(id)) {
+        impSet.delete(id);
+        saveImps();
+        const row = btn.closest('.word-item');
+        const impBtn = row ? row.querySelector('.imp-btn') : null;
+        if (impBtn) {
+          impBtn.classList.remove('is-imp');
+          impBtn.innerHTML = '<i class="fa-regular fa-bookmark"></i>';
+        }
+        if (typeof Quiz !== 'undefined') Quiz.syncImpBtn(id);
+      }
+    } else {
+      favSet.add(id);
+      btn.classList.add('is-fav');
+      btn.innerHTML = '<i class="fa-solid fa-star"></i>';
+    }
     saveFavs();
-    // Sync quiz fav button if same word is shown
     if (typeof Quiz !== 'undefined') Quiz.syncFavBtn(id);
+  },
+
+  toggleImp(id, btn) {
+    // Only react if fav is set
+    if (!favSet.has(id)) return;
+    if (impSet.has(id)) {
+      impSet.delete(id);
+      btn.classList.remove('is-imp');
+      btn.innerHTML = '<i class="fa-regular fa-bookmark"></i>';
+    } else {
+      impSet.add(id);
+      btn.classList.add('is-imp');
+      btn.innerHTML = '<i class="fa-solid fa-bookmark"></i>';
+    }
+    saveImps();
+    if (typeof Quiz !== 'undefined') Quiz.syncImpBtn(id);
   },
 
   toggleMeaning(id, btn) {
@@ -920,10 +1050,21 @@ const List = {
   updateFavRow(id) {
     const row = document.querySelector(`.word-item[data-wid="${id}"]`);
     if (!row) return;
-    const btn = row.querySelector('.icon-btn');
+    const btn = row.querySelector('.fav-btn');
+    if (!btn) return;
     const isFav = favSet.has(id);
     btn.classList.toggle('is-fav', isFav);
     btn.innerHTML = `<i class="fa-${isFav?'solid':'regular'} fa-star"></i>`;
+  },
+
+  updateImpRow(id) {
+    const row = document.querySelector(`.word-item[data-wid="${id}"]`);
+    if (!row) return;
+    const btn = row.querySelector('.imp-btn');
+    if (!btn) return;
+    const isImp = impSet.has(id);
+    btn.classList.toggle('is-imp', isImp);
+    btn.innerHTML = `<i class="fa-${isImp?'solid':'regular'} fa-bookmark"></i>`;
   },
 };
 
@@ -938,14 +1079,25 @@ const Quiz = {
   showMeaning: false,
 
   openSetup() {
+    const p = loadProg();
+    if (p && p.words && p.words.length > 0 && p.idx < p.words.length) {
+      document.getElementById('resume-select-label').textContent =
+        `${p.idx + 1} / ${p.words.length} 語目`;
+      this._showPanel('resume');
+    } else {
+      this._showPanel('setup');
+    }
+  },
+
+  showSetup() {
     this._showPanel('setup');
-    this._checkResume();
   },
 
   setSrc(s) {
     this.src = s;
     document.getElementById('src-all').classList.toggle('sel', s==='all');
     document.getElementById('src-fav').classList.toggle('sel', s==='fav');
+    document.getElementById('src-imp').classList.toggle('sel', s==='imp');
   },
 
   setOrd(o) {
@@ -955,27 +1107,25 @@ const Quiz = {
     );
   },
 
-  _checkResume() {
-    const p = loadProg();
-    const box  = document.getElementById('resume-box');
-    const btn  = document.getElementById('btn-resume');
-    const lbl  = document.getElementById('resume-label');
-    if (p && p.words && p.words.length > 0 && p.idx < p.words.length) {
-      lbl.textContent = `${p.idx + 1} / ${p.words.length} 語目`;
-      box.classList.remove('hidden');
-      btn.classList.remove('hidden');
-    } else {
-      box.classList.add('hidden');
-      btn.classList.add('hidden');
-    }
+  backToSetup() {
+    this.openSetup();
+  },
+
+  _showPanel(name) {
+    ['resume','setup','active','complete'].forEach(p => {
+      const el = document.getElementById('quiz-panel-' + p);
+      if (p === name) el.classList.remove('hidden');
+      else            el.classList.add('hidden');
+    });
   },
 
   _buildWords() {
     const from = parseInt(document.getElementById('range-from').value) || null;
     const to   = parseInt(document.getElementById('range-to').value) || null;
-    let pool = (this.src === 'fav')
-      ? allWords.filter(w => favSet.has(w.id))
-      : [...allWords];
+    let pool;
+    if (this.src === 'fav') pool = allWords.filter(w => favSet.has(w.id));
+    else if (this.src === 'imp') pool = allWords.filter(w => impSet.has(w.id));
+    else pool = [...allWords];
     if (from !== null) pool = pool.filter(w => w.id >= from);
     if (to   !== null) pool = pool.filter(w => w.id <= to);
     if (this.ord === 'asc')    pool.sort((a,b) => a.id - b.id);
@@ -1000,7 +1150,7 @@ const Quiz = {
     }
 
     if (this.words.length === 0) {
-      alert('出題できる単語がありません。\n範囲やお気に入りの設定を確認してください。');
+      alert('出題できる単語がありません。\n範囲・お気に入り・重要の設定を確認してください。');
       return;
     }
 
@@ -1026,6 +1176,8 @@ const Quiz = {
 
     // Fav btn
     this.syncFavBtn(w.id);
+    // Imp btn
+    this.syncImpBtn(w.id);
 
     // Prev btn
     const prev = document.getElementById('q-prev');
@@ -1074,11 +1226,33 @@ const Quiz = {
   toggleFav() {
     if (!this.words.length) return;
     const id = this.words[this.idx].id;
-    if (favSet.has(id)) favSet.delete(id);
-    else                favSet.add(id);
+    if (favSet.has(id)) {
+      favSet.delete(id);
+      // Also remove imp when fav is removed
+      if (impSet.has(id)) {
+        impSet.delete(id);
+        saveImps();
+        this.syncImpBtn(id);
+        List.updateImpRow(id);
+      }
+    } else {
+      favSet.add(id);
+    }
     saveFavs();
     this.syncFavBtn(id);
     List.updateFavRow(id);
+  },
+
+  toggleImp() {
+    if (!this.words.length) return;
+    const id = this.words[this.idx].id;
+    // Only toggle if fav is set
+    if (!favSet.has(id)) return;
+    if (impSet.has(id)) impSet.delete(id);
+    else impSet.add(id);
+    saveImps();
+    this.syncImpBtn(id);
+    List.updateImpRow(id);
   },
 
   syncFavBtn(id) {
@@ -1093,23 +1267,21 @@ const Quiz = {
     }
   },
 
+  syncImpBtn(id) {
+    if (!document.getElementById('quiz-panel-active').classList.contains('hidden')) {
+      if (this.words.length && this.words[this.idx].id === id) {
+        const btn = document.getElementById('q-imp-btn');
+        const isImp = impSet.has(id);
+        btn.classList.toggle('is-imp', isImp);
+        btn.innerHTML = `<i class="fa-${isImp?'solid':'regular'} fa-bookmark"></i>`;
+      }
+    }
+  },
+
   _showComplete() {
     const total = this.words.length;
     document.getElementById('complete-sub').textContent = `全${total}問が終わりました！`;
     this._showPanel('complete');
-  },
-
-  backToSetup() {
-    this._checkResume();
-    this._showPanel('setup');
-  },
-
-  _showPanel(name) {
-    ['setup','active','complete'].forEach(p => {
-      const el = document.getElementById('quiz-panel-' + p);
-      if (p === name) el.classList.remove('hidden');
-      else            el.classList.add('hidden');
-    });
   },
 };
 
@@ -1118,6 +1290,7 @@ const Quiz = {
 ============================================================ */
 (async () => {
   loadFavs();
+  loadImps();
   await loadWords();
   document.getElementById('home-count').textContent = `${allWords.length} 単語`;
   document.getElementById('loading').classList.add('hide');
