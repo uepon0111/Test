@@ -399,13 +399,13 @@ select.fi{width:auto;padding:6px 9px;font-size:12px}
 
       <!-- Transport -->
       <div class="transport">
-        <button class="btn-transport-sm" onclick="ws && ws.skip(-5)" title="-5秒">
+        <button class="btn-transport-sm" onclick="skipPlayback(-5)" title="-5秒">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="19 20 9 12 19 4 19 20"/><line x1="5" y1="19" x2="5" y2="5"/></svg>
         </button>
         <button class="btn-transport" id="playPauseBtn" onclick="togglePlay()">
           <svg id="playIcon" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="none"><polygon points="5 3 19 12 5 21 5 3"/></svg>
         </button>
-        <button class="btn-transport-sm" onclick="ws && ws.skip(5)" title="+5秒">
+        <button class="btn-transport-sm" onclick="skipPlayback(5)" title="+5秒">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 4 15 12 5 20 5 4"/><line x1="19" y1="5" x2="19" y2="19"/></svg>
         </button>
         <div class="t-time" id="curTime">0:00</div>
@@ -413,7 +413,7 @@ select.fi{width:auto;padding:6px 9px;font-size:12px}
         <div class="t-sel" id="selInfo"></div>
         <div class="t-spacer"></div>
         <div class="t-time right" id="totTime">0:00</div>
-        <button class="btn-icon" onclick="ws && ws.stop()" title="停止">
+        <button class="btn-icon" onclick="stopPlayback(true)" title="停止">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="none"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>
         </button>
       </div>
@@ -437,7 +437,7 @@ select.fi{width:auto;padding:6px 9px;font-size:12px}
         </div>
         <div style="font-size:11px;color:var(--text-3);line-height:1.5;margin-top:4px">
           <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-right:3px"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-          エクスポート時はピッチ＋速度を同時に適用します
+          ピッチは再生速度と独立して適用されます
         </div>
       </div>
 
@@ -563,6 +563,22 @@ let fadeIn = 0;
 let fadeOut = 0;
 let eqGains = [0, 0, 0, 0, 0];
 
+// Playback
+let audioCtx = null;
+let playGainNode = null;
+let soundTouchNode = null;
+let playSourceNode = null;
+let playState = 'stopped'; // stopped | playing | paused
+let playOffset = 0;
+let playStartCtxTime = 0;
+let playRafId = 0;
+let syncingWaveform = false;
+let soundTouchModulePromise = null;
+let SoundTouchNodeClass = null;
+
+const SOUND_TOUCH_MODULE_URL = 'https://cdn.jsdelivr.net/npm/@soundtouchjs/audio-worklet@1.0.10/+esm';
+const SOUND_TOUCH_WORKLET_URL = 'https://cdn.jsdelivr.net/npm/@soundtouchjs/audio-worklet@1.0.10/dist/soundtouch-processor.js';
+
 const EQ_BANDS = [
   { freq: 60,   type: 'lowshelf',  label: '60Hz\nサブ' },
   { freq: 250,  type: 'peaking',   label: '250Hz\nバス' },
@@ -614,9 +630,269 @@ function setupDrop() {
 }
 
 // ═══════════════════════════════════════════════
+// HELPERS
+// ═══════════════════════════════════════════════
+function clamp(v, min, max) {
+  return Math.max(min, Math.min(max, v));
+}
+
+function getActiveRange() {
+  const start = trimRegion ? trimRegion.start : 0;
+  const end = trimRegion ? trimRegion.end : (audioBuffer ? audioBuffer.duration : 0);
+  return { start, end };
+}
+
+function normalizeOffset(t) {
+  if (!audioBuffer) return 0;
+  const { start, end } = getActiveRange();
+  if (t < start || t > end) return start;
+  return clamp(t, start, end);
+}
+
+function getCurrentPlaybackTime() {
+  if (!audioBuffer) return 0;
+  if (playState !== 'playing' || !audioCtx) return playOffset;
+  const { end } = getActiveRange();
+  const t = playOffset + (audioCtx.currentTime - playStartCtxTime) * speedRate;
+  return clamp(t, 0, end);
+}
+
+function updateTransportUI(timeSec = getCurrentPlaybackTime()) {
+  document.getElementById('curTime').textContent = fmtTime(timeSec);
+  if (audioBuffer && ws && typeof ws.seekTo === 'function') {
+    syncingWaveform = true;
+    try {
+      ws.seekTo(clamp(timeSec / audioBuffer.duration, 0, 1));
+    } finally {
+      Promise.resolve().then(() => { syncingWaveform = false; });
+    }
+  }
+}
+
+function setPlayIcon(playing) {
+  const el = document.getElementById('playIcon');
+  if (playing) {
+    el.innerHTML = '<rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/>';
+  } else {
+    el.innerHTML = '<polygon points="5 3 19 12 5 21 5 3"/>';
+  }
+}
+
+function stopPlaybackRaf() {
+  if (playRafId) cancelAnimationFrame(playRafId);
+  playRafId = 0;
+}
+
+function stopSourceOnly() {
+  if (playSourceNode) {
+    try { playSourceNode.onended = null; } catch (_) {}
+    try { playSourceNode.stop(); } catch (_) {}
+    try { playSourceNode.disconnect(); } catch (_) {}
+    playSourceNode = null;
+  }
+}
+
+function applyLivePlaybackParams() {
+  if (playSourceNode) {
+    try { playSourceNode.playbackRate.value = speedRate; } catch (_) {}
+  }
+  if (soundTouchNode) {
+    try {
+      if (soundTouchNode.playbackRate) soundTouchNode.playbackRate.value = speedRate;
+    } catch (_) {}
+    try {
+      if (soundTouchNode.tempo) soundTouchNode.tempo.value = 1.0;
+    } catch (_) {}
+    try {
+      if (soundTouchNode.pitchSemitones) {
+        soundTouchNode.pitchSemitones.value = pitchSt;
+      } else if (soundTouchNode.pitch) {
+        soundTouchNode.pitch.value = Math.pow(2, pitchSt / 12);
+      }
+    } catch (_) {}
+    try {
+      if (soundTouchNode.pitch && soundTouchNode.pitchSemitones) soundTouchNode.pitch.value = 1.0;
+    } catch (_) {}
+  }
+  if (playGainNode) {
+    playGainNode.gain.value = volGain;
+  }
+}
+
+async function ensureSoundTouchModule() {
+  if (SoundTouchNodeClass) return SoundTouchNodeClass;
+  if (!soundTouchModulePromise) {
+    soundTouchModulePromise = import(SOUND_TOUCH_MODULE_URL);
+  }
+  const mod = await soundTouchModulePromise;
+  SoundTouchNodeClass = mod.SoundTouchNode || mod.default?.SoundTouchNode || mod.SoundTouchNode;
+  if (!SoundTouchNodeClass) {
+    throw new Error('SoundTouchNode を読み込めませんでした');
+  }
+  return SoundTouchNodeClass;
+}
+
+async function ensurePlaybackContext() {
+  const NodeClass = await ensureSoundTouchModule();
+
+  if (!audioCtx || audioCtx.state === 'closed') {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    await NodeClass.register(audioCtx, SOUND_TOUCH_WORKLET_URL);
+    playGainNode = audioCtx.createGain();
+    playGainNode.connect(audioCtx.destination);
+    soundTouchNode = new NodeClass(audioCtx);
+    soundTouchNode.connect(playGainNode);
+  } else {
+    if (audioCtx.state === 'suspended') {
+      await audioCtx.resume();
+    }
+    if (!soundTouchNode || !playGainNode) {
+      await NodeClass.register(audioCtx, SOUND_TOUCH_WORKLET_URL);
+      playGainNode = audioCtx.createGain();
+      playGainNode.connect(audioCtx.destination);
+      soundTouchNode = new NodeClass(audioCtx);
+      soundTouchNode.connect(playGainNode);
+    }
+  }
+
+  applyLivePlaybackParams();
+  return NodeClass;
+}
+
+function playbackTick() {
+  if (playState !== 'playing') return;
+
+  const t = getCurrentPlaybackTime();
+  updateTransportUI(t);
+
+  const { end } = getActiveRange();
+  if (t >= end - 0.001) {
+    handlePlaybackEnded();
+    return;
+  }
+
+  playRafId = requestAnimationFrame(playbackTick);
+}
+
+function handlePlaybackEnded() {
+  stopSourceOnly();
+  stopPlaybackRaf();
+  playState = 'stopped';
+  const { start } = getActiveRange();
+  playOffset = start;
+  setPlayIcon(false);
+  updateTransportUI(playOffset);
+}
+
+async function startPlayback(offsetSec = null) {
+  if (!audioBuffer) return;
+  const { start, end } = getActiveRange();
+
+  const target = normalizeOffset(offsetSec === null ? playOffset : offsetSec);
+  playOffset = target;
+
+  await ensurePlaybackContext();
+
+  stopSourceOnly();
+  stopPlaybackRaf();
+
+  const src = audioCtx.createBufferSource();
+  src.buffer = audioBuffer;
+  src.playbackRate.value = speedRate;
+
+  src.onended = () => {
+    if (playState !== 'playing') return;
+    handlePlaybackEnded();
+  };
+
+  src.connect(soundTouchNode);
+
+  applyLivePlaybackParams();
+
+  playSourceNode = src;
+  playState = 'playing';
+  playStartCtxTime = audioCtx.currentTime;
+  setPlayIcon(true);
+
+  const durationInBuffer = Math.max(0, end - target);
+  if (durationInBuffer <= 0) {
+    handlePlaybackEnded();
+    return;
+  }
+
+  try {
+    src.start(0, target, durationInBuffer);
+  } catch (e) {
+    console.error(e);
+    notify('再生開始エラー: ' + e.message);
+    playState = 'stopped';
+    setPlayIcon(false);
+    return;
+  }
+
+  updateTransportUI(target);
+  playRafId = requestAnimationFrame(playbackTick);
+}
+
+function pausePlayback() {
+  if (playState !== 'playing') return;
+  playOffset = getCurrentPlaybackTime();
+  playState = 'paused';
+  stopSourceOnly();
+  stopPlaybackRaf();
+  setPlayIcon(false);
+  updateTransportUI(playOffset);
+}
+
+function stopPlayback(reset = true) {
+  const { start } = getActiveRange();
+  if (playState === 'playing') {
+    playOffset = getCurrentPlaybackTime();
+  }
+  stopSourceOnly();
+  stopPlaybackRaf();
+  playState = 'stopped';
+  if (reset) playOffset = start;
+  setPlayIcon(false);
+  updateTransportUI(playOffset);
+}
+
+async function togglePlay() {
+  if (!audioBuffer) return;
+  if (playState === 'playing') {
+    pausePlayback();
+    return;
+  }
+  await startPlayback(playOffset);
+}
+
+async function seekPlayback(offsetSec) {
+  if (!audioBuffer) return;
+  const target = normalizeOffset(offsetSec);
+  if (playState === 'playing') {
+    playOffset = target;
+    await startPlayback(target);
+    return;
+  }
+  playOffset = target;
+  updateTransportUI(playOffset);
+}
+
+async function skipPlayback(deltaSec) {
+  await seekPlayback(getCurrentPlaybackTime() + deltaSec);
+}
+
+function resetPlaybackCursor() {
+  const { start } = getActiveRange();
+  playOffset = start;
+  updateTransportUI(playOffset);
+}
+
+// ═══════════════════════════════════════════════
 // FILE LOADING
 // ═══════════════════════════════════════════════
 async function loadFile(file) {
+  stopPlayback(true);
   audioFile = file;
   showLoad('音声ファイルを読み込み中...');
   try {
@@ -636,6 +912,8 @@ async function loadFile(file) {
 
     initWS(file);
     readTags(file);
+
+    resetPlaybackCursor();
     hideLoad();
   } catch(e) {
     hideLoad();
@@ -687,8 +965,6 @@ function initWS(file) {
 
   ws.on('ready', () => {
     document.getElementById('totTime').textContent = fmtTime(ws.getDuration());
-    ws.setPlaybackRate(speedRate);
-    ws.setVolume(Math.min(volGain, 1));
   });
 
   ws.on('audioprocess', () => {
@@ -696,7 +972,14 @@ function initWS(file) {
   });
 
   ws.on('seek', () => {
-    document.getElementById('curTime').textContent = fmtTime(ws.getCurrentTime());
+    if (syncingWaveform) return;
+    const t = ws.getCurrentTime();
+    if (playState === 'playing') {
+      seekPlayback(t);
+    } else {
+      playOffset = normalizeOffset(t);
+      updateTransportUI(playOffset);
+    }
   });
 
   ws.on('play', () => setPlayIcon(true));
@@ -817,6 +1100,7 @@ function clearTrim() {
   document.getElementById('clearTrimBtn').style.display = 'none';
   document.getElementById('selInfo').textContent = '';
   setWvInfo(false, '「範囲選択」をクリックしてドラッグするとトリミング範囲を指定できます');
+  if (playState !== 'playing') resetPlaybackCursor();
 }
 
 function updateTrimUI(r) {
@@ -835,7 +1119,14 @@ function setWvInfo(active, text) {
 // ═══════════════════════════════════════════════
 // TRANSPORT
 // ═══════════════════════════════════════════════
-function togglePlay() { if (ws) ws.playPause(); }
+async function togglePlay() {
+  if (!audioBuffer) return;
+  if (playState === 'playing') {
+    pausePlayback();
+  } else {
+    await startPlayback(playOffset);
+  }
+}
 
 // ═══════════════════════════════════════════════
 // EFFECTS
@@ -843,25 +1134,29 @@ function togglePlay() { if (ws) ws.playPause(); }
 function onPitch(v) {
   pitchSt = parseFloat(v);
   document.getElementById('pitchVal').textContent = (pitchSt >= 0 ? '+' : '') + pitchSt;
-  updateWSRate();
+  applyLivePlaybackParams();
 }
 
 function onSpeed(v) {
+  const wasPlaying = playState === 'playing' && audioCtx;
+  const current = wasPlaying ? getCurrentPlaybackTime() : playOffset;
+
   speedRate = parseFloat(v);
   document.getElementById('speedVal').textContent = speedRate.toFixed(2) + 'x';
-  updateWSRate();
-}
 
-function updateWSRate() {
-  if (!ws) return;
-  const pFactor = Math.pow(2, pitchSt / 12);
-  ws.setPlaybackRate(speedRate * pFactor);
+  if (wasPlaying) {
+    playOffset = current;
+    playStartCtxTime = audioCtx.currentTime;
+  }
+
+  applyLivePlaybackParams();
+  updateTransportUI(wasPlaying ? current : playOffset);
 }
 
 function onVol(v) {
   volGain = parseFloat(v) / 100;
   document.getElementById('volVal').textContent = v + '%';
-  if (ws) ws.setVolume(Math.min(volGain, 2));
+  if (playGainNode) playGainNode.gain.value = volGain;
 }
 
 function onFadeIn(v) {
@@ -883,14 +1178,24 @@ function resetPitch() {
   pitchSt = 0;
   document.getElementById('pitchSl').value = 0;
   document.getElementById('pitchVal').textContent = '±0';
-  updateWSRate();
+  applyLivePlaybackParams();
 }
 
 function resetSpeed() {
+  const wasPlaying = playState === 'playing' && audioCtx;
+  const current = wasPlaying ? getCurrentPlaybackTime() : playOffset;
+
   speedRate = 1.0;
   document.getElementById('speedSl').value = 1.0;
   document.getElementById('speedVal').textContent = '1.00x';
-  updateWSRate();
+
+  if (wasPlaying) {
+    playOffset = current;
+    playStartCtxTime = audioCtx.currentTime;
+  }
+
+  applyLivePlaybackParams();
+  updateTransportUI(wasPlaying ? current : playOffset);
 }
 
 function resetVolume() {
@@ -901,7 +1206,7 @@ function resetVolume() {
   document.getElementById('volVal').textContent = '100%';
   document.getElementById('fiVal').textContent = '0.0s';
   document.getElementById('foVal').textContent = '0.0s';
-  if (ws) ws.setVolume(1.0);
+  if (playGainNode) playGainNode.gain.value = 1.0;
 }
 
 function resetEQ() {
@@ -920,74 +1225,116 @@ async function exportAudio() {
   showLoad('音声を処理中...');
 
   try {
-    // ─ Determine trim range ─
     const sr = audioBuffer.sampleRate;
     const startSamp = trimRegion ? Math.floor(trimRegion.start * sr) : 0;
     const endSamp   = trimRegion ? Math.floor(trimRegion.end   * sr) : audioBuffer.length;
     const trimLen   = endSamp - startSamp;
     const nCh       = audioBuffer.numberOfChannels;
 
-    // ─ Effective playback rate (speed + pitch) ─
-    const pFactor = Math.pow(2, pitchSt / 12);
-    const effRate  = speedRate * pFactor;
-    const outLen   = Math.ceil(trimLen / effRate);
-
-    // ─ Build trimmed buffer ─
     const trimBuf = new AudioBuffer({ numberOfChannels: nCh, length: trimLen, sampleRate: sr });
     for (let ch = 0; ch < nCh; ch++) {
       trimBuf.copyToChannel(audioBuffer.getChannelData(ch).slice(startSamp, endSamp), ch);
     }
 
-    // ─ Offline render ─
-    const offCtx = new OfflineAudioContext(nCh, outLen, sr);
+    const outLen = Math.max(1, Math.ceil(trimLen / speedRate));
 
-    // Source
-    const src = offCtx.createBufferSource();
-    src.buffer = trimBuf;
-    src.playbackRate.value = effRate;
+    let rendered = null;
+    try {
+      const NodeClass = await ensureSoundTouchModule();
+      const offCtx = new OfflineAudioContext(nCh, outLen, sr);
 
-    // EQ chain
-    let node = src;
-    EQ_BANDS.forEach((b, i) => {
-      if (eqGains[i] === 0) return; // skip flat bands for performance
-      const f = offCtx.createBiquadFilter();
-      f.type = b.type;
-      f.frequency.value = b.freq;
-      f.gain.value = eqGains[i];
-      f.Q.value = 1.41;
-      node.connect(f);
-      node = f;
-    });
+      if (offCtx.audioWorklet && NodeClass.register) {
+        await NodeClass.register(offCtx, SOUND_TOUCH_WORKLET_URL);
 
-    // Gain + Fades
-    const gainNode = offCtx.createGain();
-    gainNode.gain.value = volGain;
-    const outDur = outLen / sr;
+        const src = offCtx.createBufferSource();
+        src.buffer = trimBuf;
+        src.playbackRate.value = speedRate;
 
-    if (fadeIn > 0) {
-      const fd = Math.min(fadeIn, outDur * 0.5);
-      gainNode.gain.setValueAtTime(0.001, 0);
-      gainNode.gain.exponentialRampToValueAtTime(volGain, fd);
+        const stNode = new NodeClass(offCtx);
+        const gainNode = offCtx.createGain();
+        gainNode.gain.value = volGain;
+
+        src.connect(stNode);
+        stNode.connect(gainNode);
+
+        let node = gainNode;
+        EQ_BANDS.forEach((b, i) => {
+          if (eqGains[i] === 0) return;
+          const f = offCtx.createBiquadFilter();
+          f.type = b.type;
+          f.frequency.value = b.freq;
+          f.gain.value = eqGains[i];
+          f.Q.value = 1.41;
+          node.connect(f);
+          node = f;
+        });
+
+        node.connect(offCtx.destination);
+
+        if (stNode.playbackRate) stNode.playbackRate.value = speedRate;
+        if (stNode.tempo) stNode.tempo.value = 1.0;
+        if (stNode.pitchSemitones) {
+          stNode.pitchSemitones.value = pitchSt;
+        } else if (stNode.pitch) {
+          stNode.pitch.value = Math.pow(2, pitchSt / 12);
+        }
+
+        src.start(0);
+        rendered = await offCtx.startRendering();
+      }
+    } catch (soundTouchErr) {
+      console.warn('SoundTouch export fallback:', soundTouchErr);
+      rendered = null;
     }
-    if (fadeOut > 0) {
-      const fd = Math.min(fadeOut, outDur * 0.5);
-      const fs = Math.max(0, outDur - fd);
-      gainNode.gain.setValueAtTime(volGain, fs);
-      gainNode.gain.exponentialRampToValueAtTime(0.001, outDur - 0.001);
+
+    if (!rendered) {
+      const pFactor = Math.pow(2, pitchSt / 12);
+      const effRate  = speedRate * pFactor;
+      const fallbackOutLen = Math.ceil(trimLen / effRate);
+      const offCtx = new OfflineAudioContext(nCh, fallbackOutLen, sr);
+
+      const src = offCtx.createBufferSource();
+      src.buffer = trimBuf;
+      src.playbackRate.value = effRate;
+
+      let node = src;
+      EQ_BANDS.forEach((b, i) => {
+        if (eqGains[i] === 0) return;
+        const f = offCtx.createBiquadFilter();
+        f.type = b.type;
+        f.frequency.value = b.freq;
+        f.gain.value = eqGains[i];
+        f.Q.value = 1.41;
+        node.connect(f);
+        node = f;
+      });
+
+      const gainNode = offCtx.createGain();
+      gainNode.gain.value = volGain;
+      const outDur = fallbackOutLen / sr;
+
+      if (fadeIn > 0) {
+        const fd = Math.min(fadeIn, outDur * 0.5);
+        gainNode.gain.setValueAtTime(0.001, 0);
+        gainNode.gain.exponentialRampToValueAtTime(volGain, fd);
+      }
+      if (fadeOut > 0) {
+        const fd = Math.min(fadeOut, outDur * 0.5);
+        const fs = Math.max(0, outDur - fd);
+        gainNode.gain.setValueAtTime(volGain, fs);
+        gainNode.gain.exponentialRampToValueAtTime(0.001, outDur - 0.001);
+      }
+
+      node.connect(gainNode);
+      gainNode.connect(offCtx.destination);
+      src.start(0);
+
+      rendered = await offCtx.startRendering();
     }
 
-    node.connect(gainNode);
-    gainNode.connect(offCtx.destination);
-    src.start(0);
-
-    showLoad('オフラインレンダリング中...');
-    const rendered = await offCtx.startRendering();
-
-    // ─ Encode to WAV ─
     showLoad('WAVファイルを生成中...');
     const wavBlob = encodeWAV(rendered);
 
-    // ─ Apply ID3 tags ─
     showLoad('メタデータを書き込み中...');
     const wavAB = await wavBlob.arrayBuffer();
     let finalBlob;
@@ -1025,7 +1372,6 @@ async function exportAudio() {
       finalBlob = wavBlob;
     }
 
-    // ─ Download ─
     const title = document.getElementById('mTitle').value.trim();
     const fname = (title || audioFile.name.replace(/\.[^/.]+$/,'')) + '.wav';
     dlBlob(finalBlob, fname);
@@ -1055,7 +1401,7 @@ function encodeWAV(buffer) {
   const ws4 = (o, s) => { for (let i = 0; i < s.length; i++) dv.setUint8(o + i, s.charCodeAt(i)); };
   ws4(0, 'RIFF'); dv.setUint32(4, 36 + dataLen, true);
   ws4(8, 'WAVE'); ws4(12, 'fmt '); dv.setUint32(16, 16, true);
-  dv.setUint16(20, 1, true);           // PCM
+  dv.setUint16(20, 1, true);
   dv.setUint16(22, nCh, true);
   dv.setUint32(24, sr, true);
   dv.setUint32(28, sr * bpa, true);
@@ -1086,10 +1432,24 @@ function dlBlob(blob, name) {
 // RESET EDITOR
 // ═══════════════════════════════════════════════
 function resetEditor() {
+  stopPlayback(true);
+
+  if (audioCtx) {
+    try { audioCtx.close(); } catch (_) {}
+    audioCtx = null;
+  }
+
   if (ws) { ws.destroy(); ws = null; }
   audioFile = null; audioBuffer = null;
   thumbData = null; thumbMime = null;
   trimRegion = null; trimMode = false;
+  playGainNode = null;
+  soundTouchNode = null;
+  playSourceNode = null;
+  playState = 'stopped';
+  playOffset = 0;
+  playStartCtxTime = 0;
+  stopPlaybackRaf();
 
   document.getElementById('editor').style.display = 'none';
   document.getElementById('uploadArea').style.display = 'flex';
@@ -1099,10 +1459,10 @@ function resetEditor() {
   clearTrim();
   resetPitch(); resetSpeed(); resetVolume(); resetEQ();
 
-  // Reset trim button
   const tb = document.getElementById('trimBtn');
   tb.style.background = ''; tb.style.color = ''; tb.style.borderColor = '';
   trimMode = false;
+  resetPlaybackCursor();
 }
 
 // ═══════════════════════════════════════════════
