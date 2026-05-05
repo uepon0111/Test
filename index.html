@@ -1,0 +1,1139 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AudioForge — 音声エディター</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Mono:wght@300;400;500&family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #F8F8F7;
+  --surface: #FFFFFF;
+  --surface-2: #F3F3F2;
+  --border: #E8E8E6;
+  --border-strong: #D4D4D0;
+  --text: #1A1A18;
+  --text-2: #5A5A56;
+  --text-3: #A4A49E;
+  --accent: #C8372A;
+  --accent-hover: #A82D23;
+  --accent-light: rgba(200,55,42,0.07);
+  --accent-light2: rgba(200,55,42,0.14);
+  --r: 5px;
+  --r-lg: 10px;
+  --shadow-sm: 0 1px 3px rgba(0,0,0,0.05),0 1px 2px rgba(0,0,0,0.04);
+  --shadow: 0 4px 14px rgba(0,0,0,0.07);
+  --font: 'DM Sans',sans-serif;
+  --mono: 'DM Mono',monospace;
+  --display: 'DM Serif Display',serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;font-family:var(--font);background:var(--bg);color:var(--text);-webkit-font-smoothing:antialiased}
+
+/* ── HEADER ── */
+.hdr{
+  position:sticky;top:0;z-index:200;
+  height:52px;display:flex;align-items:center;justify-content:space-between;
+  padding:0 28px;background:var(--surface);border-bottom:1px solid var(--border);
+  backdrop-filter:blur(8px);
+}
+.logo{font-family:var(--display);font-size:20px;letter-spacing:-.5px;color:var(--text)}
+.logo em{color:var(--accent);font-style:normal}
+.hdr-right{display:flex;align-items:center;gap:8px}
+
+/* ── BUTTONS ── */
+.btn{display:inline-flex;align-items:center;gap:5px;padding:6px 13px;border-radius:var(--r);font-family:var(--font);font-size:13px;font-weight:500;cursor:pointer;border:none;transition:all .14s;white-space:nowrap;line-height:1}
+.btn svg{flex-shrink:0}
+.btn-primary{background:var(--accent);color:#fff}
+.btn-primary:hover{background:var(--accent-hover);transform:translateY(-1px);box-shadow:0 3px 8px rgba(200,55,42,.25)}
+.btn-primary:active{transform:none}
+.btn-secondary{background:var(--surface);color:var(--text);border:1px solid var(--border-strong)}
+.btn-secondary:hover{background:var(--surface-2);border-color:var(--border-strong)}
+.btn-ghost{background:transparent;color:var(--text-2);padding:6px 8px}
+.btn-ghost:hover{background:var(--surface-2);color:var(--text)}
+.btn-icon{background:transparent;color:var(--text-2);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;width:30px;height:30px;border-radius:var(--r);transition:all .14s}
+.btn-icon:hover{background:var(--surface-2);color:var(--text)}
+.btn-transport{width:38px;height:38px;border-radius:50%;background:var(--text);color:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer;border:none;transition:all .14s}
+.btn-transport:hover{background:var(--accent);transform:scale(1.06)}
+.btn-transport-sm{width:30px;height:30px;border-radius:50%;background:transparent;color:var(--text-2);display:flex;align-items:center;justify-content:center;cursor:pointer;border:1px solid var(--border-strong);transition:all .14s}
+.btn-transport-sm:hover{background:var(--surface-2);color:var(--text)}
+
+/* ── UPLOAD ── */
+#uploadArea{
+  min-height:calc(100vh - 52px);display:flex;align-items:center;justify-content:center;padding:40px
+}
+.drop-zone{
+  border:2px dashed var(--border-strong);border-radius:12px;padding:60px 48px;
+  max-width:500px;width:100%;background:var(--surface);text-align:center;
+  cursor:pointer;transition:all .2s;position:relative;overflow:hidden
+}
+.drop-zone::before{
+  content:'';position:absolute;inset:0;background:radial-gradient(ellipse at 50% 0%,var(--accent-light),transparent 70%);
+  opacity:0;transition:opacity .3s
+}
+.drop-zone:hover::before,.drop-zone.drag-over::before{opacity:1}
+.drop-zone:hover,.drop-zone.drag-over{border-color:var(--accent);transform:translateY(-2px);box-shadow:var(--shadow)}
+.drop-icon{
+  width:56px;height:56px;border-radius:50%;background:var(--surface-2);
+  display:flex;align-items:center;justify-content:center;margin:0 auto 20px;
+  color:var(--text-2);border:1px solid var(--border)
+}
+.drop-title{font-family:var(--display);font-size:26px;margin-bottom:6px}
+.drop-sub{font-size:14px;color:var(--text-2);margin-bottom:22px;line-height:1.5}
+.drop-formats{font-family:var(--mono);font-size:11px;color:var(--text-3);margin-top:16px}
+
+/* ── EDITOR LAYOUT ── */
+#editor{display:none;flex-direction:column;min-height:calc(100vh - 52px)}
+#editor.active{display:flex}
+.editor-body{
+  flex:1;display:grid;grid-template-columns:264px 1fr 288px;
+  border-top:1px solid var(--border);min-height:0;overflow:hidden
+}
+.panel{overflow-y:auto;padding:18px;scrollbar-width:thin;scrollbar-color:var(--border) transparent}
+.panel-left{border-right:1px solid var(--border);background:var(--surface)}
+.panel-center{background:var(--bg);display:flex;flex-direction:column}
+.panel-right{border-left:1px solid var(--border);background:var(--surface)}
+
+/* ── SECTION ── */
+.sec{margin-bottom:22px}
+.sec:last-child{margin-bottom:0}
+.sec-label{
+  display:flex;align-items:center;gap:5px;
+  font-size:10px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--text-3);margin-bottom:11px
+}
+.sec-label svg{flex-shrink:0}
+.divider{height:1px;background:var(--border);margin:18px 0}
+
+/* ── THUMBNAIL ── */
+.thumb-wrap{
+  position:relative;width:100%;aspect-ratio:1;border:1px solid var(--border);
+  border-radius:var(--r);overflow:hidden;background:var(--surface-2);
+  cursor:pointer;display:flex;align-items:center;justify-content:center;
+  margin-bottom:8px;transition:border-color .2s
+}
+.thumb-wrap:hover{border-color:var(--accent)}
+.thumb-wrap:hover .thumb-overlay{opacity:1}
+#thumbImg{width:100%;height:100%;object-fit:cover;display:none}
+.thumb-ph{display:flex;flex-direction:column;align-items:center;gap:8px;color:var(--text-3);font-size:12px}
+.thumb-overlay{
+  position:absolute;inset:0;background:rgba(0,0,0,.48);
+  display:flex;align-items:center;justify-content:center;
+  opacity:0;transition:opacity .2s;color:#fff;gap:5px;font-size:13px;font-weight:500
+}
+#removeThumbnailBtn{display:none}
+
+/* ── FORM ── */
+.fg{margin-bottom:12px}
+.fg:last-child{margin-bottom:0}
+label.fl{display:block;font-size:11.5px;font-weight:500;color:var(--text-2);margin-bottom:4px}
+.fi{
+  width:100%;padding:7px 9px;border:1px solid var(--border);border-radius:var(--r);
+  font-family:var(--font);font-size:13px;color:var(--text);background:var(--surface);
+  transition:border-color .14s,box-shadow .14s;outline:none
+}
+.fi:focus{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-light)}
+.fi::placeholder{color:var(--text-3)}
+textarea.fi{resize:vertical;min-height:60px;line-height:1.5}
+.fg-row{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+
+/* ── WAVEFORM AREA ── */
+.wv-section{flex:1;padding:18px;display:flex;flex-direction:column;min-height:0}
+.wv-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+.wv-container{
+  background:var(--surface);border:1px solid var(--border);border-radius:var(--r);
+  overflow:hidden;margin-bottom:3px
+}
+#waveform{padding:12px 0}
+#wf-timeline{
+  background:var(--surface);border:1px solid var(--border);
+  border-top:none;border-radius:0 0 var(--r) var(--r);height:22px
+}
+.wv-info{
+  display:flex;align-items:center;gap:5px;
+  font-size:11.5px;color:var(--text-3);margin-top:6px;transition:color .2s
+}
+.wv-info.active-trim{color:var(--accent)}
+
+/* ── TRANSPORT ── */
+.transport{
+  background:var(--surface);border-top:1px solid var(--border);
+  padding:11px 18px;display:flex;align-items:center;gap:10px
+}
+.t-time{font-family:var(--mono);font-size:12.5px;color:var(--text-2);min-width:38px}
+.t-time.right{text-align:right}
+.t-spacer{flex:1}
+.t-sel{font-family:var(--mono);font-size:11.5px;color:var(--accent)}
+
+/* ── SLIDER ── */
+.sl-wrap{margin-bottom:14px}
+.sl-wrap:last-child{margin-bottom:0}
+.sl-hdr{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:5px}
+.sl-name{font-size:12px;font-weight:500;color:var(--text-2)}
+.sl-val{font-family:var(--mono);font-size:12px;color:var(--accent);font-weight:500}
+.sl-track{position:relative;height:3px;background:var(--border);border-radius:2px;margin:4px 0}
+input[type=range]{
+  -webkit-appearance:none;appearance:none;
+  width:100%;height:3px;background:transparent;
+  cursor:pointer;position:relative;z-index:1;margin:0;display:block
+}
+input[type=range]::-webkit-slider-thumb{
+  -webkit-appearance:none;width:15px;height:15px;border-radius:50%;
+  background:var(--accent);cursor:pointer;border:2.5px solid #fff;
+  box-shadow:0 1px 4px rgba(0,0,0,.18);transition:transform .14s
+}
+input[type=range]::-webkit-slider-thumb:hover{transform:scale(1.18)}
+input[type=range]::-moz-range-thumb{
+  width:13px;height:13px;border-radius:50%;background:var(--accent);
+  cursor:pointer;border:2.5px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.18)
+}
+.sec-right{display:flex;align-items:center;justify-content:space-between}
+.reset-btn{
+  padding:2px 7px;border:1px solid var(--border);border-radius:3px;
+  background:transparent;color:var(--text-3);font-size:10.5px;font-family:var(--mono);
+  cursor:pointer;transition:all .14s
+}
+.reset-btn:hover{border-color:var(--accent);color:var(--accent)}
+
+/* ── EQ ── */
+.eq-wrap{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;padding-top:4px}
+.eq-band{display:flex;flex-direction:column;align-items:center;gap:5px}
+.eq-val{font-family:var(--mono);font-size:10px;color:var(--accent);font-weight:500;height:14px;text-align:center}
+.eq-rail{
+  height:108px;width:22px;display:flex;align-items:center;justify-content:center;
+  position:relative
+}
+.eq-rail::before{
+  content:'';position:absolute;left:50%;top:0;bottom:0;width:3px;
+  transform:translateX(-50%);background:var(--border);border-radius:2px
+}
+.eq-rail::after{
+  content:'';position:absolute;left:50%;top:50%;
+  width:7px;height:1px;transform:translate(-50%,-50%);
+  background:var(--border-strong)
+}
+input.eq-sl{
+  writing-mode:vertical-lr;direction:rtl;
+  height:100px;width:16px;background:transparent;position:relative;z-index:1
+}
+input.eq-sl::-webkit-slider-thumb{
+  width:13px;height:13px
+}
+.eq-lbl{font-family:var(--mono);font-size:9px;color:var(--text-3);text-align:center;line-height:1.4}
+
+/* ── FOOTER ── */
+.editor-footer{
+  background:var(--surface);border-top:1px solid var(--border);
+  padding:10px 20px;display:flex;align-items:center;gap:12px
+}
+.f-info{display:flex;align-items:center;gap:10px;flex:1;min-width:0}
+.f-name{font-size:13px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:220px}
+.f-meta{font-family:var(--mono);font-size:11px;color:var(--text-3);white-space:nowrap}
+.f-export{display:flex;align-items:center;gap:8px}
+select.fi{width:auto;padding:6px 9px;font-size:12px}
+
+/* ── LOADING ── */
+#loadingOverlay{
+  position:fixed;inset:0;background:rgba(255,255,255,.88);
+  display:none;align-items:center;justify-content:center;flex-direction:column;
+  gap:12px;z-index:500;font-size:13.5px;color:var(--text-2);
+  backdrop-filter:blur(3px)
+}
+.spinner{
+  width:28px;height:28px;border:2px solid var(--border);
+  border-top-color:var(--accent);border-radius:50%;animation:spin .7s linear infinite
+}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* ── NOTIFICATION ── */
+#notif{
+  position:fixed;bottom:22px;right:22px;
+  background:var(--text);color:#fff;padding:10px 15px;border-radius:var(--r);
+  font-size:13px;font-weight:500;display:flex;align-items:center;gap:7px;
+  box-shadow:var(--shadow);transform:translateY(70px);opacity:0;z-index:999;
+  transition:all .3s cubic-bezier(.34,1.56,.64,1)
+}
+#notif.show{transform:translateY(0);opacity:1}
+
+/* ── TRIM ACTIVE BADGE ── */
+.trim-badge{
+  display:inline-flex;align-items:center;gap:4px;
+  padding:3px 8px;border-radius:3px;background:var(--accent-light2);
+  color:var(--accent);font-size:11px;font-weight:600;font-family:var(--mono)
+}
+
+/* ── SCROLLBAR ── */
+::-webkit-scrollbar{width:4px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--border-strong);border-radius:2px}
+
+/* ── RESPONSIVE ── */
+@media(max-width:960px){
+  .editor-body{grid-template-columns:240px 1fr 260px}
+}
+@media(max-width:800px){
+  .editor-body{grid-template-columns:1fr;overflow-y:auto}
+  .panel-left,.panel-right{border:none;border-bottom:1px solid var(--border)}
+  .panel-center{min-height:340px}
+}
+</style>
+</head>
+<body>
+
+<!-- ── HEADER ── -->
+<header class="hdr">
+  <div class="logo">Audio<em>Forge</em></div>
+  <div class="hdr-right">
+    <button class="btn btn-ghost" id="newBtn" onclick="resetEditor()" style="display:none">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="15" y2="15"/></svg>
+      新規
+    </button>
+  </div>
+</header>
+
+<!-- ── UPLOAD ── -->
+<div id="uploadArea">
+  <div class="drop-zone" id="dropZone" onclick="document.getElementById('fileInput').click()">
+    <div class="drop-icon">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
+    </div>
+    <div class="drop-title">音声ファイルをドロップ</div>
+    <div class="drop-sub">またはクリックしてファイルを選択してください</div>
+    <button class="btn btn-primary" onclick="event.stopPropagation();document.getElementById('fileInput').click()">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/></svg>
+      ファイルを選択
+    </button>
+    <div class="drop-formats">MP3 · WAV · FLAC · OGG · AAC · M4A · AIFF · OPUS</div>
+  </div>
+  <input type="file" id="fileInput" accept="audio/*" style="display:none">
+</div>
+
+<!-- ── EDITOR ── -->
+<div id="editor">
+  <div class="editor-body">
+
+    <!-- ── LEFT: METADATA ── -->
+    <div class="panel panel-left">
+
+      <!-- Thumbnail -->
+      <div class="sec">
+        <div class="sec-label">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+          サムネイル
+        </div>
+        <div class="thumb-wrap" id="thumbWrap" onclick="document.getElementById('thumbInput').click()">
+          <img id="thumbImg" alt="thumbnail">
+          <div class="thumb-ph" id="thumbPh">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
+            <span>画像を追加</span>
+          </div>
+          <div class="thumb-overlay">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+            変更する
+          </div>
+        </div>
+        <input type="file" id="thumbInput" accept="image/*" style="display:none">
+        <button class="btn btn-secondary" id="removeThumbnailBtn" onclick="removeThumbnail()" style="width:100%;font-size:12px;margin-top:0">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>
+          削除
+        </button>
+      </div>
+
+      <div class="divider"></div>
+
+      <!-- Metadata -->
+      <div class="sec">
+        <div class="sec-label">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
+          メタ情報
+        </div>
+        <div class="fg"><label class="fl">タイトル</label><input class="fi" id="mTitle" type="text" placeholder="曲のタイトル"></div>
+        <div class="fg"><label class="fl">アーティスト</label><input class="fi" id="mArtist" type="text" placeholder="アーティスト名"></div>
+        <div class="fg"><label class="fl">アルバム</label><input class="fi" id="mAlbum" type="text" placeholder="アルバム名"></div>
+        <div class="fg"><label class="fl">アルバムアーティスト</label><input class="fi" id="mAlbumArtist" type="text" placeholder="アルバムアーティスト"></div>
+        <div class="fg-row">
+          <div class="fg"><label class="fl">年</label><input class="fi" id="mYear" type="number" placeholder="2024" min="1000" max="9999"></div>
+          <div class="fg"><label class="fl">トラック番号</label><input class="fi" id="mTrack" type="text" placeholder="1/12"></div>
+        </div>
+        <div class="fg"><label class="fl">ジャンル</label><input class="fi" id="mGenre" type="text" placeholder="Pop, Jazz, Rock..."></div>
+        <div class="fg"><label class="fl">作曲者</label><input class="fi" id="mComposer" type="text" placeholder="作曲者名"></div>
+        <div class="fg"><label class="fl">コメント</label><textarea class="fi" id="mComment" placeholder="コメントを入力..."></textarea></div>
+        <div class="fg"><label class="fl">著作権</label><input class="fi" id="mCopyright" type="text" placeholder="© 2024 Artist Name"></div>
+        <div class="fg"><label class="fl">URL / Website</label><input class="fi" id="mUrl" type="url" placeholder="https://..."></div>
+        <div class="fg"><label class="fl">エンコーダー</label><input class="fi" id="mEncoder" type="text" placeholder="AudioForge"></div>
+        <div class="fg"><label class="fl">BPM</label><input class="fi" id="mBpm" type="number" placeholder="120" min="1" max="999"></div>
+      </div>
+    </div>
+
+    <!-- ── CENTER: WAVEFORM ── -->
+    <div class="panel-center">
+      <div class="wv-section">
+        <div class="wv-header">
+          <div class="sec-label" style="margin:0">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+            波形 / トリミング
+          </div>
+          <div style="display:flex;gap:6px;align-items:center">
+            <button class="btn btn-secondary" id="trimBtn" onclick="toggleTrim()" style="font-size:11.5px;padding:5px 10px">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><line x1="20" y1="4" x2="8.12" y2="15.88"/><line x1="14.47" y1="14.48" x2="20" y2="20"/><line x1="8.12" y1="8.12" x2="12" y2="12"/></svg>
+              範囲選択
+            </button>
+            <button class="btn btn-secondary" id="clearTrimBtn" onclick="clearTrim()" style="font-size:11.5px;padding:5px 10px;display:none">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+              解除
+            </button>
+          </div>
+        </div>
+
+        <div class="wv-container">
+          <div id="waveform"></div>
+          <div id="wf-timeline"></div>
+        </div>
+
+        <div class="wv-info" id="wvInfo">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+          <span id="wvInfoText">「範囲選択」をクリックしてドラッグするとトリミング範囲を指定できます</span>
+        </div>
+      </div>
+
+      <!-- Transport -->
+      <div class="transport">
+        <button class="btn-transport-sm" onclick="ws && ws.skip(-5)" title="-5秒">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="19 20 9 12 19 4 19 20"/><line x1="5" y1="19" x2="5" y2="5"/></svg>
+        </button>
+        <button class="btn-transport" id="playPauseBtn" onclick="togglePlay()">
+          <svg id="playIcon" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="none"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+        </button>
+        <button class="btn-transport-sm" onclick="ws && ws.skip(5)" title="+5秒">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 4 15 12 5 20 5 4"/><line x1="19" y1="5" x2="19" y2="19"/></svg>
+        </button>
+        <div class="t-time" id="curTime">0:00</div>
+        <div class="t-spacer"></div>
+        <div class="t-sel" id="selInfo"></div>
+        <div class="t-spacer"></div>
+        <div class="t-time right" id="totTime">0:00</div>
+        <button class="btn-icon" onclick="ws && ws.stop()" title="停止">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="none"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>
+        </button>
+      </div>
+    </div>
+
+    <!-- ── RIGHT: EFFECTS ── -->
+    <div class="panel panel-right">
+
+      <!-- Pitch -->
+      <div class="sec">
+        <div class="sec-right sec-label">
+          <span style="display:flex;align-items:center;gap:5px">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
+            ピッチ
+          </span>
+          <button class="reset-btn" onclick="resetPitch()">リセット</button>
+        </div>
+        <div class="sl-wrap">
+          <div class="sl-hdr"><span class="sl-name">半音 (semitones)</span><span class="sl-val" id="pitchVal">±0</span></div>
+          <div class="sl-track"><input type="range" id="pitchSl" min="-12" max="12" step="0.5" value="0" oninput="onPitch(this.value)"></div>
+        </div>
+        <div style="font-size:11px;color:var(--text-3);line-height:1.5;margin-top:4px">
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-right:3px"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+          エクスポート時はピッチ＋速度を同時に適用します
+        </div>
+      </div>
+
+      <div class="divider"></div>
+
+      <!-- Speed -->
+      <div class="sec">
+        <div class="sec-right sec-label">
+          <span style="display:flex;align-items:center;gap:5px">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
+            速度
+          </span>
+          <button class="reset-btn" onclick="resetSpeed()">リセット</button>
+        </div>
+        <div class="sl-wrap">
+          <div class="sl-hdr"><span class="sl-name">再生速度</span><span class="sl-val" id="speedVal">1.00x</span></div>
+          <div class="sl-track"><input type="range" id="speedSl" min="0.25" max="3.0" step="0.05" value="1.0" oninput="onSpeed(this.value)"></div>
+        </div>
+      </div>
+
+      <div class="divider"></div>
+
+      <!-- Volume -->
+      <div class="sec">
+        <div class="sec-right sec-label">
+          <span style="display:flex;align-items:center;gap:5px">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>
+            音量
+          </span>
+          <button class="reset-btn" onclick="resetVolume()">リセット</button>
+        </div>
+        <div class="sl-wrap">
+          <div class="sl-hdr"><span class="sl-name">音量</span><span class="sl-val" id="volVal">100%</span></div>
+          <div class="sl-track"><input type="range" id="volSl" min="0" max="300" step="1" value="100" oninput="onVol(this.value)"></div>
+        </div>
+        <div class="sl-wrap">
+          <div class="sl-hdr"><span class="sl-name">フェードイン</span><span class="sl-val" id="fiVal">0.0s</span></div>
+          <div class="sl-track"><input type="range" id="fiSl" min="0" max="15" step="0.1" value="0" oninput="onFadeIn(this.value)"></div>
+        </div>
+        <div class="sl-wrap">
+          <div class="sl-hdr"><span class="sl-name">フェードアウト</span><span class="sl-val" id="foVal">0.0s</span></div>
+          <div class="sl-track"><input type="range" id="foSl" min="0" max="15" step="0.1" value="0" oninput="onFadeOut(this.value)"></div>
+        </div>
+      </div>
+
+      <div class="divider"></div>
+
+      <!-- EQ -->
+      <div class="sec">
+        <div class="sec-right sec-label">
+          <span style="display:flex;align-items:center;gap:5px">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>
+            イコライザー (5バンド)
+          </span>
+          <button class="reset-btn" onclick="resetEQ()">リセット</button>
+        </div>
+        <div class="eq-wrap" id="eqWrap">
+          <!-- generated by JS -->
+        </div>
+        <div style="display:flex;justify-content:space-between;margin-top:6px">
+          <span style="font-family:var(--mono);font-size:9px;color:var(--text-3)">−12dB</span>
+          <span style="font-family:var(--mono);font-size:9px;color:var(--text-3)">+12dB</span>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ── FOOTER ── -->
+  <div class="editor-footer">
+    <div class="f-info">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--text-3)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
+      <span class="f-name" id="fName">—</span>
+      <span class="f-meta" id="fMeta"></span>
+    </div>
+    <div class="f-export">
+      <select class="fi" id="exportFmt" style="width:auto;font-size:12px;padding:6px 9px">
+        <option value="wav">WAV</option>
+      </select>
+      <button class="btn btn-primary" onclick="exportAudio()">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        エクスポート
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- ── LOADING ── -->
+<div id="loadingOverlay">
+  <div class="spinner"></div>
+  <span id="loadingText">処理中...</span>
+</div>
+
+<!-- ── NOTIFICATION ── -->
+<div id="notif">
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+  <span id="notifText"></span>
+</div>
+
+<!-- ── SCRIPTS ── -->
+<script src="https://unpkg.com/wavesurfer.js@6.6.4/dist/wavesurfer.min.js"></script>
+<script src="https://unpkg.com/wavesurfer.js@6.6.4/dist/plugin/wavesurfer.regions.min.js"></script>
+<script src="https://unpkg.com/wavesurfer.js@6.6.4/dist/plugin/wavesurfer.timeline.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jsmediatags/3.9.5/jsmediatags.min.js"></script>
+<script src="https://unpkg.com/browser-id3-writer@4.4.0/dist/browser-id3-writer.js"></script>
+
+<script>
+// ═══════════════════════════════════════════════
+// STATE
+// ═══════════════════════════════════════════════
+let ws = null;
+let audioFile = null;
+let audioBuffer = null;
+let thumbData = null;
+let thumbMime = null;
+let trimRegion = null;
+let trimMode = false;
+
+let pitchSt = 0;
+let speedRate = 1.0;
+let volGain = 1.0;
+let fadeIn = 0;
+let fadeOut = 0;
+let eqGains = [0, 0, 0, 0, 0];
+
+const EQ_BANDS = [
+  { freq: 60,   type: 'lowshelf',  label: '60Hz\nサブ' },
+  { freq: 250,  type: 'peaking',   label: '250Hz\nバス' },
+  { freq: 1000, type: 'peaking',   label: '1kHz\nミッド' },
+  { freq: 4000, type: 'peaking',   label: '4kHz\nプレゼンス' },
+  { freq: 12000,type: 'highshelf', label: '12kHz\nエアー' },
+];
+
+// ═══════════════════════════════════════════════
+// INIT
+// ═══════════════════════════════════════════════
+(function init() {
+  buildEQ();
+  setupDrop();
+
+  document.getElementById('fileInput').addEventListener('change', e => {
+    if (e.target.files[0]) loadFile(e.target.files[0]);
+  });
+  document.getElementById('thumbInput').addEventListener('change', e => {
+    if (e.target.files[0]) loadThumb(e.target.files[0]);
+  });
+})();
+
+function buildEQ() {
+  const wrap = document.getElementById('eqWrap');
+  wrap.innerHTML = '';
+  EQ_BANDS.forEach((b, i) => {
+    wrap.innerHTML += `
+      <div class="eq-band">
+        <div class="eq-val" id="eqV${i}">0</div>
+        <div class="eq-rail">
+          <input class="eq-sl" type="range" id="eq${i}" min="-12" max="12" step="0.5" value="0"
+            orient="vertical" oninput="onEQ(${i},this.value)">
+        </div>
+        <div class="eq-lbl">${b.label.replace('\n','<br>')}</div>
+      </div>`;
+  });
+}
+
+function setupDrop() {
+  const dz = document.getElementById('dropZone');
+  dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('drag-over'); });
+  dz.addEventListener('dragleave', () => dz.classList.remove('drag-over'));
+  dz.addEventListener('drop', e => {
+    e.preventDefault(); dz.classList.remove('drag-over');
+    const f = e.dataTransfer.files[0];
+    if (f && f.type.startsWith('audio/')) loadFile(f);
+  });
+}
+
+// ═══════════════════════════════════════════════
+// FILE LOADING
+// ═══════════════════════════════════════════════
+async function loadFile(file) {
+  audioFile = file;
+  showLoad('音声ファイルを読み込み中...');
+  try {
+    const ab = await file.arrayBuffer();
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    audioBuffer = await ctx.decodeAudioData(ab.slice());
+    ctx.close();
+
+    document.getElementById('uploadArea').style.display = 'none';
+    const ed = document.getElementById('editor');
+    ed.style.display = 'flex';
+    document.getElementById('newBtn').style.display = 'flex';
+
+    document.getElementById('fName').textContent = file.name;
+    document.getElementById('fMeta').textContent =
+      `${fmtTime(audioBuffer.duration)} · ${fmtSize(file.size)} · ${audioBuffer.sampleRate}Hz · ${audioBuffer.numberOfChannels}ch`;
+
+    initWS(file);
+    readTags(file);
+    hideLoad();
+  } catch(e) {
+    hideLoad();
+    notify('読み込みエラー: ' + e.message);
+    console.error(e);
+  }
+}
+
+function initWS(file) {
+  if (ws) { ws.destroy(); ws = null; }
+
+  ws = WaveSurfer.create({
+    container: '#waveform',
+    waveColor: '#D4D4D0',
+    progressColor: '#C8372A',
+    cursorColor: '#C8372A',
+    cursorWidth: 2,
+    height: 96,
+    responsive: true,
+    normalize: true,
+    barWidth: 2,
+    barGap: 1,
+    barRadius: 1,
+    fillParent: true,
+    interact: true,
+    plugins: [
+      WaveSurfer.regions.create({
+        regionsMinLength: 0.01,
+        dragSelection: false,
+        color: 'rgba(200,55,42,0.11)',
+        slop: 5,
+      }),
+      WaveSurfer.timeline.create({
+        container: '#wf-timeline',
+        height: 22,
+        primaryColor: '#A4A49E',
+        secondaryColor: '#D4D4D0',
+        primaryFontColor: '#6B6B65',
+        secondaryFontColor: '#A4A49E',
+        fontSize: 10,
+        fontFamily: 'DM Mono',
+      }),
+    ],
+  });
+
+  const reader = new FileReader();
+  reader.onload = e => ws.load(e.target.result);
+  reader.readAsDataURL(file);
+
+  ws.on('ready', () => {
+    document.getElementById('totTime').textContent = fmtTime(ws.getDuration());
+    ws.setPlaybackRate(speedRate);
+    ws.setVolume(Math.min(volGain, 1));
+  });
+
+  ws.on('audioprocess', () => {
+    document.getElementById('curTime').textContent = fmtTime(ws.getCurrentTime());
+  });
+
+  ws.on('seek', () => {
+    document.getElementById('curTime').textContent = fmtTime(ws.getCurrentTime());
+  });
+
+  ws.on('play', () => setPlayIcon(true));
+  ws.on('pause', () => setPlayIcon(false));
+  ws.on('finish', () => setPlayIcon(false));
+
+  ws.on('region-created', r => {
+    if (trimRegion && trimRegion.id !== r.id) trimRegion.remove();
+    trimRegion = r;
+    updateTrimUI(r);
+  });
+
+  ws.on('region-update-end', r => updateTrimUI(r));
+}
+
+function setPlayIcon(playing) {
+  const el = document.getElementById('playIcon');
+  if (playing) {
+    el.innerHTML = '<rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/>';
+  } else {
+    el.innerHTML = '<polygon points="5 3 19 12 5 21 5 3"/>';
+  }
+}
+
+// ═══════════════════════════════════════════════
+// METADATA
+// ═══════════════════════════════════════════════
+function readTags(file) {
+  const ids = ['mTitle','mArtist','mAlbum','mAlbumArtist','mYear','mTrack','mGenre','mComposer','mComment','mCopyright','mUrl','mEncoder','mBpm'];
+  ids.forEach(id => document.getElementById(id).value = '');
+  document.getElementById('mTitle').value = file.name.replace(/\.[^/.]+$/,'');
+
+  if (typeof jsmediatags === 'undefined') return;
+  jsmediatags.read(file, {
+    onSuccess(tag) {
+      const t = tag.tags;
+      const set = (id, v) => { if (v) document.getElementById(id).value = v; };
+      set('mTitle',  t.title);
+      set('mArtist', t.artist);
+      set('mAlbum',  t.album);
+      set('mYear',   t.year);
+      set('mTrack',  t.track);
+      set('mGenre',  t.genre);
+      set('mComposer', t.composer);
+      if (t.comment) set('mComment', typeof t.comment === 'object' ? (t.comment.text || '') : t.comment);
+      if (t.TPE2) set('mAlbumArtist', t.TPE2.data || '');
+      if (t.TCOP) set('mCopyright', t.TCOP.data || '');
+      if (t.TBPM) set('mBpm', t.TBPM.data || '');
+      if (t.TENC) set('mEncoder', t.TENC.data || '');
+      if (t.WOAR) set('mUrl', t.WOAR.url || '');
+
+      if (t.picture) {
+        const pic = t.picture;
+        thumbMime = pic.format || 'image/jpeg';
+        const blob = new Blob([new Uint8Array(pic.data)], { type: thumbMime });
+        const url = URL.createObjectURL(blob);
+        showThumb(url);
+        const fr = new FileReader();
+        fr.onload = e => thumbData = e.target.result.split(',')[1];
+        fr.readAsDataURL(blob);
+      }
+    },
+    onError(e) { console.log('Tag read:', e.type); }
+  });
+}
+
+// ═══════════════════════════════════════════════
+// THUMBNAIL
+// ═══════════════════════════════════════════════
+function loadThumb(file) {
+  thumbMime = file.type;
+  const fr = new FileReader();
+  fr.onload = e => {
+    thumbData = e.target.result.split(',')[1];
+    showThumb(e.target.result);
+  };
+  fr.readAsDataURL(file);
+}
+
+function showThumb(url) {
+  document.getElementById('thumbImg').src = url;
+  document.getElementById('thumbImg').style.display = 'block';
+  document.getElementById('thumbPh').style.display = 'none';
+  document.getElementById('removeThumbnailBtn').style.display = 'flex';
+}
+
+function removeThumbnail() {
+  thumbData = null; thumbMime = null;
+  document.getElementById('thumbImg').style.display = 'none';
+  document.getElementById('thumbImg').src = '';
+  document.getElementById('thumbPh').style.display = 'flex';
+  document.getElementById('removeThumbnailBtn').style.display = 'none';
+  event && event.stopPropagation();
+}
+
+// ═══════════════════════════════════════════════
+// TRIM
+// ═══════════════════════════════════════════════
+function toggleTrim() {
+  trimMode = !trimMode;
+  const btn = document.getElementById('trimBtn');
+  if (trimMode) {
+    ws.enableDragSelection({ color: 'rgba(200,55,42,0.12)' });
+    btn.style.background = 'var(--accent)';
+    btn.style.color = '#fff';
+    btn.style.borderColor = 'var(--accent)';
+    setWvInfo(true, '波形上をドラッグしてトリム範囲を選択してください');
+  } else {
+    ws.disableDragSelection();
+    btn.style.background = '';
+    btn.style.color = '';
+    btn.style.borderColor = '';
+  }
+}
+
+function clearTrim() {
+  if (trimRegion) { trimRegion.remove(); trimRegion = null; }
+  document.getElementById('clearTrimBtn').style.display = 'none';
+  document.getElementById('selInfo').textContent = '';
+  setWvInfo(false, '「範囲選択」をクリックしてドラッグするとトリミング範囲を指定できます');
+}
+
+function updateTrimUI(r) {
+  const s = fmtTime(r.start), e = fmtTime(r.end), d = fmtTime(r.end - r.start);
+  document.getElementById('selInfo').textContent = `${s} → ${e}  (${d})`;
+  setWvInfo(true, `トリム範囲: ${s} ～ ${e} (長さ: ${d})`);
+  document.getElementById('clearTrimBtn').style.display = 'flex';
+}
+
+function setWvInfo(active, text) {
+  const el = document.getElementById('wvInfo');
+  el.className = 'wv-info' + (active ? ' active-trim' : '');
+  document.getElementById('wvInfoText').textContent = text;
+}
+
+// ═══════════════════════════════════════════════
+// TRANSPORT
+// ═══════════════════════════════════════════════
+function togglePlay() { if (ws) ws.playPause(); }
+
+// ═══════════════════════════════════════════════
+// EFFECTS
+// ═══════════════════════════════════════════════
+function onPitch(v) {
+  pitchSt = parseFloat(v);
+  document.getElementById('pitchVal').textContent = (pitchSt >= 0 ? '+' : '') + pitchSt;
+  updateWSRate();
+}
+
+function onSpeed(v) {
+  speedRate = parseFloat(v);
+  document.getElementById('speedVal').textContent = speedRate.toFixed(2) + 'x';
+  updateWSRate();
+}
+
+function updateWSRate() {
+  if (!ws) return;
+  const pFactor = Math.pow(2, pitchSt / 12);
+  ws.setPlaybackRate(speedRate * pFactor);
+}
+
+function onVol(v) {
+  volGain = parseFloat(v) / 100;
+  document.getElementById('volVal').textContent = v + '%';
+  if (ws) ws.setVolume(Math.min(volGain, 2));
+}
+
+function onFadeIn(v) {
+  fadeIn = parseFloat(v);
+  document.getElementById('fiVal').textContent = parseFloat(v).toFixed(1) + 's';
+}
+
+function onFadeOut(v) {
+  fadeOut = parseFloat(v);
+  document.getElementById('foVal').textContent = parseFloat(v).toFixed(1) + 's';
+}
+
+function onEQ(i, v) {
+  eqGains[i] = parseFloat(v);
+  document.getElementById(`eqV${i}`).textContent = (v > 0 ? '+' : '') + parseFloat(v).toFixed(1);
+}
+
+function resetPitch() {
+  pitchSt = 0;
+  document.getElementById('pitchSl').value = 0;
+  document.getElementById('pitchVal').textContent = '±0';
+  updateWSRate();
+}
+
+function resetSpeed() {
+  speedRate = 1.0;
+  document.getElementById('speedSl').value = 1.0;
+  document.getElementById('speedVal').textContent = '1.00x';
+  updateWSRate();
+}
+
+function resetVolume() {
+  volGain = 1.0; fadeIn = 0; fadeOut = 0;
+  document.getElementById('volSl').value = 100;
+  document.getElementById('fiSl').value = 0;
+  document.getElementById('foSl').value = 0;
+  document.getElementById('volVal').textContent = '100%';
+  document.getElementById('fiVal').textContent = '0.0s';
+  document.getElementById('foVal').textContent = '0.0s';
+  if (ws) ws.setVolume(1.0);
+}
+
+function resetEQ() {
+  eqGains = [0,0,0,0,0];
+  for (let i = 0; i < 5; i++) {
+    document.getElementById(`eq${i}`).value = 0;
+    document.getElementById(`eqV${i}`).textContent = '0';
+  }
+}
+
+// ═══════════════════════════════════════════════
+// EXPORT
+// ═══════════════════════════════════════════════
+async function exportAudio() {
+  if (!audioBuffer) return;
+  showLoad('音声を処理中...');
+
+  try {
+    // ─ Determine trim range ─
+    const sr = audioBuffer.sampleRate;
+    const startSamp = trimRegion ? Math.floor(trimRegion.start * sr) : 0;
+    const endSamp   = trimRegion ? Math.floor(trimRegion.end   * sr) : audioBuffer.length;
+    const trimLen   = endSamp - startSamp;
+    const nCh       = audioBuffer.numberOfChannels;
+
+    // ─ Effective playback rate (speed + pitch) ─
+    const pFactor = Math.pow(2, pitchSt / 12);
+    const effRate  = speedRate * pFactor;
+    const outLen   = Math.ceil(trimLen / effRate);
+
+    // ─ Build trimmed buffer ─
+    const trimBuf = new AudioBuffer({ numberOfChannels: nCh, length: trimLen, sampleRate: sr });
+    for (let ch = 0; ch < nCh; ch++) {
+      trimBuf.copyToChannel(audioBuffer.getChannelData(ch).slice(startSamp, endSamp), ch);
+    }
+
+    // ─ Offline render ─
+    const offCtx = new OfflineAudioContext(nCh, outLen, sr);
+
+    // Source
+    const src = offCtx.createBufferSource();
+    src.buffer = trimBuf;
+    src.playbackRate.value = effRate;
+
+    // EQ chain
+    let node = src;
+    EQ_BANDS.forEach((b, i) => {
+      if (eqGains[i] === 0) return; // skip flat bands for performance
+      const f = offCtx.createBiquadFilter();
+      f.type = b.type;
+      f.frequency.value = b.freq;
+      f.gain.value = eqGains[i];
+      f.Q.value = 1.41;
+      node.connect(f);
+      node = f;
+    });
+
+    // Gain + Fades
+    const gainNode = offCtx.createGain();
+    gainNode.gain.value = volGain;
+    const outDur = outLen / sr;
+
+    if (fadeIn > 0) {
+      const fd = Math.min(fadeIn, outDur * 0.5);
+      gainNode.gain.setValueAtTime(0.001, 0);
+      gainNode.gain.exponentialRampToValueAtTime(volGain, fd);
+    }
+    if (fadeOut > 0) {
+      const fd = Math.min(fadeOut, outDur * 0.5);
+      const fs = Math.max(0, outDur - fd);
+      gainNode.gain.setValueAtTime(volGain, fs);
+      gainNode.gain.exponentialRampToValueAtTime(0.001, outDur - 0.001);
+    }
+
+    node.connect(gainNode);
+    gainNode.connect(offCtx.destination);
+    src.start(0);
+
+    showLoad('オフラインレンダリング中...');
+    const rendered = await offCtx.startRendering();
+
+    // ─ Encode to WAV ─
+    showLoad('WAVファイルを生成中...');
+    const wavBlob = encodeWAV(rendered);
+
+    // ─ Apply ID3 tags ─
+    showLoad('メタデータを書き込み中...');
+    const wavAB = await wavBlob.arrayBuffer();
+    let finalBlob;
+
+    try {
+      const writer = new ID3Writer(wavAB);
+      const g = id => document.getElementById(id).value.trim();
+
+      if (g('mTitle'))       writer.setFrame('TIT2', g('mTitle'));
+      if (g('mArtist'))      writer.setFrame('TPE1', [g('mArtist')]);
+      if (g('mAlbum'))       writer.setFrame('TALB', g('mAlbum'));
+      if (g('mAlbumArtist')) writer.setFrame('TPE2', g('mAlbumArtist'));
+      if (g('mYear'))        writer.setFrame('TYER', parseInt(g('mYear')));
+      if (g('mTrack'))       writer.setFrame('TRCK', g('mTrack'));
+      if (g('mGenre'))       writer.setFrame('TCON', [g('mGenre')]);
+      if (g('mComposer'))    writer.setFrame('TCOM', [g('mComposer')]);
+      if (g('mCopyright'))   writer.setFrame('TCOP', g('mCopyright'));
+      if (g('mEncoder'))     writer.setFrame('TENC', g('mEncoder'));
+      if (g('mBpm'))         writer.setFrame('TBPM', parseInt(g('mBpm')));
+      if (g('mComment'))     writer.setFrame('COMM', { description:'', text: g('mComment'), language:'jpn' });
+      if (g('mUrl'))         writer.setFrame('WOAR', g('mUrl'));
+
+      if (thumbData && thumbMime) {
+        const picBytes = Uint8Array.from(atob(thumbData), c => c.charCodeAt(0));
+        writer.setFrame('APIC', {
+          type: 3, data: picBytes.buffer,
+          description: 'Cover', useUnicodeEncoding: false,
+        });
+      }
+
+      writer.addTag();
+      finalBlob = new Blob([writer.arrayBuffer], { type: 'audio/wav' });
+    } catch(e) {
+      console.warn('ID3 write failed:', e);
+      finalBlob = wavBlob;
+    }
+
+    // ─ Download ─
+    const title = document.getElementById('mTitle').value.trim();
+    const fname = (title || audioFile.name.replace(/\.[^/.]+$/,'')) + '.wav';
+    dlBlob(finalBlob, fname);
+    hideLoad();
+    notify('エクスポート完了: ' + fname);
+
+  } catch(e) {
+    hideLoad();
+    notify('エクスポートエラー: ' + e.message);
+    console.error(e);
+  }
+}
+
+// ═══════════════════════════════════════════════
+// WAV ENCODER
+// ═══════════════════════════════════════════════
+function encodeWAV(buffer) {
+  const nCh = buffer.numberOfChannels;
+  const sr  = buffer.sampleRate;
+  const len = buffer.length;
+  const bps = 16;
+  const bpa = nCh * bps / 8;
+  const dataLen = len * bpa;
+  const ab  = new ArrayBuffer(44 + dataLen);
+  const dv  = new DataView(ab);
+
+  const ws4 = (o, s) => { for (let i = 0; i < s.length; i++) dv.setUint8(o + i, s.charCodeAt(i)); };
+  ws4(0, 'RIFF'); dv.setUint32(4, 36 + dataLen, true);
+  ws4(8, 'WAVE'); ws4(12, 'fmt '); dv.setUint32(16, 16, true);
+  dv.setUint16(20, 1, true);           // PCM
+  dv.setUint16(22, nCh, true);
+  dv.setUint32(24, sr, true);
+  dv.setUint32(28, sr * bpa, true);
+  dv.setUint16(32, bpa, true);
+  dv.setUint16(34, bps, true);
+  ws4(36, 'data'); dv.setUint32(40, dataLen, true);
+
+  let off = 44;
+  for (let i = 0; i < len; i++) {
+    for (let ch = 0; ch < nCh; ch++) {
+      const s = Math.max(-1, Math.min(1, buffer.getChannelData(ch)[i]));
+      dv.setInt16(off, s < 0 ? s * 32768 : s * 32767, true);
+      off += 2;
+    }
+  }
+  return new Blob([ab], { type: 'audio/wav' });
+}
+
+function dlBlob(blob, name) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = name;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1500);
+}
+
+// ═══════════════════════════════════════════════
+// RESET EDITOR
+// ═══════════════════════════════════════════════
+function resetEditor() {
+  if (ws) { ws.destroy(); ws = null; }
+  audioFile = null; audioBuffer = null;
+  thumbData = null; thumbMime = null;
+  trimRegion = null; trimMode = false;
+
+  document.getElementById('editor').style.display = 'none';
+  document.getElementById('uploadArea').style.display = 'flex';
+  document.getElementById('newBtn').style.display = 'none';
+  document.getElementById('fileInput').value = '';
+  removeThumbnail();
+  clearTrim();
+  resetPitch(); resetSpeed(); resetVolume(); resetEQ();
+
+  // Reset trim button
+  const tb = document.getElementById('trimBtn');
+  tb.style.background = ''; tb.style.color = ''; tb.style.borderColor = '';
+  trimMode = false;
+}
+
+// ═══════════════════════════════════════════════
+// UTILS
+// ═══════════════════════════════════════════════
+function fmtTime(s) {
+  const m = Math.floor(s / 60);
+  const sec = Math.floor(s % 60);
+  return `${m}:${sec.toString().padStart(2,'0')}`;
+}
+
+function fmtSize(b) {
+  if (b < 1024 * 1024) return (b / 1024).toFixed(0) + ' KB';
+  return (b / (1024 * 1024)).toFixed(1) + ' MB';
+}
+
+function showLoad(t) {
+  document.getElementById('loadingText').textContent = t || '処理中...';
+  document.getElementById('loadingOverlay').style.display = 'flex';
+}
+
+function hideLoad() {
+  document.getElementById('loadingOverlay').style.display = 'none';
+}
+
+function notify(t) {
+  const n = document.getElementById('notif');
+  document.getElementById('notifText').textContent = t;
+  n.classList.add('show');
+  setTimeout(() => n.classList.remove('show'), 3500);
+}
+</script>
+</body>
+</html>
